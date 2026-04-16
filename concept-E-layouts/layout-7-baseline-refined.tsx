@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import type {
   Person,
   RuleGroup,
@@ -193,6 +193,10 @@ export interface PopulationDisplayProps {
   excludedByLayers: { layer: EvaluationLayer; people: Person[] }[];
   policies: PolicyRef[];
   compact?: boolean;
+  delta?: {
+    added: Person[];
+    removed: Person[];
+  };
 }
 
 // ── Sub-components ───────────────────────────────────────────────────────────
@@ -262,18 +266,119 @@ function PaginationButton({ label, onClick, disabled }: { label: string; onClick
   );
 }
 
-// ── Divider ──────────────────────────────────────────────────────────────────
-
-function Divider({ compact }: { compact?: boolean }) {
+function DeltaPersonRow({ person, type, compact }: {
+  person: Person;
+  type: 'added' | 'removed';
+  compact?: boolean;
+}) {
+  const accent = type === 'added' ? C.green : C.red;
+  const bg = type === 'added' ? C.greenLight : C.redLight;
   return (
-    <div
-      role="separator"
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 10,
+      padding: compact ? '4px 8px' : '5px 8px',
+      borderRadius: 8, background: bg,
+      marginBottom: 2,
+    }}>
+      <span style={{ fontSize: 13, fontWeight: 700, color: accent, width: 14, textAlign: 'center', flexShrink: 0 }}>
+        {type === 'added' ? '+' : '−'}
+      </span>
+      <Avatar name={person.name} size={compact ? 22 : 24} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontSize: 13, fontWeight: 500, color: C.text,
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>
+          {person.name}
+        </div>
+        {!compact && (
+          <div style={{ fontSize: 12, color: C.textSecondary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {person.title} · {person.department}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Tab button (Notion-style: icon-only resting, icon+label on hover/active) ─
+
+function TabButton({ icon, label, isActive, onClick, badge }: {
+  icon: React.ReactNode;
+  label: string;
+  isActive: boolean;
+  onClick: () => void;
+  badge?: { text: string; color: string; bg: string };
+}) {
+  const [hovered, setHovered] = useState(false);
+  const showLabel = isActive || hovered;
+
+  const bg = isActive
+    ? C.surfaceAlt
+    : hovered ? 'rgba(0,0,0,0.04)' : 'transparent';
+
+  const color = isActive
+    ? C.text
+    : hovered ? C.textSecondary : C.textMuted;
+
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       style={{
-        height: 1,
-        background: C.border,
-        margin: compact ? '8px 0' : '12px 0',
+        display: 'flex', alignItems: 'center', gap: showLabel ? 5 : 0,
+        padding: showLabel ? '5px 10px' : '5px 7px',
+        borderRadius: 8,
+        border: 'none',
+        cursor: 'pointer',
+        fontFamily: FONT,
+        fontSize: 13,
+        fontWeight: isActive ? 600 : 500,
+        color,
+        background: bg,
+        transition: 'all 0.2s ease',
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        position: 'relative',
       }}
-    />
+    >
+      <span style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        width: 16, height: 16, flexShrink: 0,
+        opacity: isActive ? 1 : hovered ? 0.75 : 0.5,
+        transition: 'opacity 0.15s ease',
+      }}>
+        {icon}
+      </span>
+      <span style={{
+        maxWidth: showLabel ? 150 : 0,
+        opacity: showLabel ? 1 : 0,
+        overflow: 'hidden',
+        transition: 'max-width 0.2s ease, opacity 0.15s ease',
+        display: 'flex', alignItems: 'center', gap: 4,
+      }}>
+        {label}
+        {badge && (
+          <span style={{
+            fontSize: 11, fontWeight: 700, letterSpacing: 0.2,
+            color: badge.color, background: badge.bg,
+            borderRadius: 9999, padding: '1px 6px',
+            lineHeight: '16px',
+          }}>
+            {badge.text}
+          </span>
+        )}
+      </span>
+      {/* Badge dot when collapsed (not hovered, not active) — signals there's a delta */}
+      {badge && !showLabel && (
+        <span style={{
+          position: 'absolute', top: 3, right: 3,
+          width: 6, height: 6, borderRadius: '50%',
+          background: badge.color,
+        }} />
+      )}
+    </button>
   );
 }
 
@@ -287,31 +392,101 @@ export default function Layout7BaselineRefined({
   excludedByLayers,
   policies,
   compact,
+  delta,
 }: PopulationDisplayProps) {
-  const padding = compact ? 14 : 20;
   const totalExcluded = excludedByLayers.reduce((sum, x) => sum + x.people.length, 0);
   const total = members.length;
-
-  // — Section 1: Exclusion detail expansion
-  const [exclusionExpanded, setExclusionExpanded] = useState(false);
-
-  // — Section 2: Population state
-  const [selectedPerson, setSelectedPerson] = useState<Person | null>(null);
-  const [showAll, setShowAll] = useState(false);
-  const [page, setPage] = useState(0);
-  const PAGE_SIZE = compact ? 5 : 8;
-  const showFaces = total <= 20;
-  const avatarStackCount = compact ? 3 : 5;
-
-  const explanation = selectedPerson ? explainPerson(selectedPerson, rule, layers) : null;
-
-  // — Section 3: Impact expansion
-  const [impactExpanded, setImpactExpanded] = useState(false);
   const totalAffected = policies.reduce((sum, p) => sum + p.affectedCount, 0);
 
-  // Determine if the card is "short" (few members, small overall) — use tighter divider margins
-  const isShort = total <= 5;
-  const dividerCompact = compact || isShort;
+  type Tab = 'members' | 'excluded' | 'impact';
+  const [activeTab, setActiveTab] = useState<Tab>('members');
+  const [selectedPerson, setSelectedPerson] = useState<Person | null>(null);
+  const [page, setPage] = useState(0);
+  const PAGE_SIZE = compact ? 6 : 8;
+  const avatarStackCount = compact ? 3 : 5;
+
+  const hasExcluded = totalExcluded > 0;
+  const hasPolicies = policies.length > 0;
+  const hasDelta = delta && (delta.added.length > 0 || delta.removed.length > 0);
+
+  const membersBadge = hasDelta ? {
+    text: `+${delta!.added.length} −${delta!.removed.length}`,
+    color: delta!.added.length > 0 && delta!.removed.length > 0 ? C.amber
+      : delta!.added.length > 0 ? C.green : C.red,
+    bg: delta!.added.length > 0 && delta!.removed.length > 0 ? C.amberLight
+      : delta!.added.length > 0 ? C.greenLight : C.redLight,
+  } : undefined;
+
+  const impactBadge = hasDelta && hasPolicies ? {
+    text: 'affected',
+    color: C.amber,
+    bg: C.amberLight,
+  } : undefined;
+
+  const tabs: { id: Tab; icon: React.ReactNode; label: string; show: boolean; badge?: { text: string; color: string; bg: string } }[] = [
+    {
+      id: 'members',
+      icon: (
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="6" cy="5" r="2.5" />
+          <path d="M1.5 14c0-2.5 2-4 4.5-4s4.5 1.5 4.5 4" />
+          <circle cx="11.5" cy="5.5" r="1.8" />
+          <path d="M11.5 9.5c1.8 0 3.2 1.1 3.2 2.8" />
+        </svg>
+      ),
+      label: `${total} people`,
+      show: total > 0,
+      badge: membersBadge,
+    },
+    {
+      id: 'excluded',
+      icon: (
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="8" cy="8" r="5.5" />
+          <path d="M4.1 11.9L11.9 4.1" />
+        </svg>
+      ),
+      label: `${totalExcluded} excluded`,
+      show: hasExcluded,
+    },
+    {
+      id: 'impact',
+      icon: (
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M6 3H4a1 1 0 00-1 1v8a1 1 0 001 1h8a1 1 0 001-1v-2" />
+          <path d="M9 2h5v5" />
+          <path d="M14 2L7 9" />
+        </svg>
+      ),
+      label: `${policies.length} ${policies.length === 1 ? 'policy' : 'policies'}`,
+      show: hasPolicies,
+      badge: impactBadge,
+    },
+  ];
+
+  function handleTabClick(id: Tab) {
+    if (activeTab === id) return;
+    setActiveTab(id);
+    setSelectedPerson(null);
+    setPage(0);
+  }
+
+  if (total === 0) {
+    return (
+      <div
+        role="region"
+        aria-label="Population summary"
+        style={{
+          background: C.surface, borderRadius: 14, boxShadow: S.card,
+          border: `1px solid ${C.border}`, padding: compact ? 14 : 18, fontFamily: FONT,
+        }}
+      >
+        <div style={{ padding: '6px 0', color: C.textMuted, fontSize: 14 }}>
+          No one matches these conditions.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -319,283 +494,271 @@ export default function Layout7BaselineRefined({
       aria-label="Population summary"
       style={{
         background: C.surface,
-        borderRadius: 16,
+        borderRadius: 14,
         boxShadow: S.card,
         border: `1px solid ${C.border}`,
-        padding,
         fontFamily: FONT,
+        overflow: 'hidden',
       }}
     >
-      {/* ═══ Section 1: Match count + exclusion indicator ═══ */}
-      <div>
-        <div style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          minHeight: 24,
-        }}>
-          <span style={{ fontSize: 16, fontWeight: 600, color: C.text }}>
-            {total} {total === 1 ? 'person' : 'people'}
-          </span>
-          {totalExcluded > 0 && (
-            <button
-              onClick={() => setExclusionExpanded(!exclusionExpanded)}
-              style={{
-                background: 'none', border: 'none', cursor: 'pointer',
-                display: 'flex', alignItems: 'center', gap: 6,
-                padding: 0, fontFamily: FONT, fontSize: 14,
-              }}
-            >
-              <span style={{
-                fontWeight: 600, color: C.amber, background: C.amberLight,
-                borderRadius: 9999, padding: '2px 9px', fontSize: 13, letterSpacing: 0.125,
-              }}>
-                {totalExcluded} excluded
-              </span>
-              <span style={{ fontSize: 13, color: C.accent, fontWeight: 500 }}>
-                {exclusionExpanded ? 'Hide' : 'Details'}
-              </span>
-            </button>
-          )}
-        </div>
+      {/* ── Tab bar ── */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 2,
+        padding: '10px 16px 0',
+      }}>
+        {tabs.filter(t => t.show).map(t => (
+          <TabButton
+            key={t.id}
+            icon={t.icon}
+            label={t.label}
+            isActive={activeTab === t.id}
+            onClick={() => handleTabClick(t.id)}
+            badge={t.badge}
+          />
+        ))}
+      </div>
 
-        {/* Exclusion detail expansion */}
-        {exclusionExpanded && totalExcluded > 0 && (
-          <div style={{ marginTop: 10 }}>
+      {/* ── Tab content ── */}
+      <div style={{ padding: compact ? '10px 14px 14px' : '12px 16px 16px' }}>
+
+        {/* Members tab */}
+        {activeTab === 'members' && (
+          <div>
+            {/* Delta summary (edit mode) */}
+            {hasDelta && (
+              <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                {delta!.added.length > 0 && (
+                  <span style={{
+                    fontSize: 12, fontWeight: 600, color: C.green,
+                    background: C.greenLight, borderRadius: 9999, padding: '3px 10px',
+                  }}>
+                    +{delta!.added.length} joining
+                  </span>
+                )}
+                {delta!.removed.length > 0 && (
+                  <span style={{
+                    fontSize: 12, fontWeight: 600, color: C.red,
+                    background: C.redLight, borderRadius: 9999, padding: '3px 10px',
+                  }}>
+                    −{delta!.removed.length} leaving
+                  </span>
+                )}
+              </div>
+            )}
+
+            {/* Added people (edit mode) */}
+            {hasDelta && delta!.added.length > 0 && (
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.green, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>
+                  Joining
+                </div>
+                {delta!.added.slice(0, 4).map(p => (
+                  <DeltaPersonRow key={p.id} person={p} type="added" compact={compact} />
+                ))}
+                {delta!.added.length > 4 && (
+                  <div style={{ fontSize: 12, color: C.textMuted, padding: '3px 0 0 34px' }}>
+                    +{delta!.added.length - 4} more
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Removed people (edit mode) */}
+            {hasDelta && delta!.removed.length > 0 && (
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.red, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>
+                  Leaving
+                </div>
+                {delta!.removed.slice(0, 4).map(p => (
+                  <DeltaPersonRow key={p.id} person={p} type="removed" compact={compact} />
+                ))}
+                {delta!.removed.length > 4 && (
+                  <div style={{ fontSize: 12, color: C.textMuted, padding: '3px 0 0 34px' }}>
+                    +{delta!.removed.length - 4} more
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Separator between delta and full list */}
+            {hasDelta && (
+              <div style={{ height: 1, background: C.border, margin: '8px 0' }} />
+            )}
+
+            {/* Face pile summary */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
+              <div style={{ display: 'flex', alignItems: 'center' }}>
+                {members.slice(0, avatarStackCount).map((p, i) => (
+                  <div key={p.id} style={{ marginLeft: i === 0 ? 0 : -8, zIndex: avatarStackCount - i, position: 'relative' }}>
+                    <Avatar name={p.name} size={26} />
+                  </div>
+                ))}
+                {total > avatarStackCount && (
+                  <div style={{
+                    width: 26, height: 26, borderRadius: '50%',
+                    background: C.surfaceAlt, color: C.textSecondary,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 10, fontWeight: 600, marginLeft: -8,
+                    border: '1px solid rgba(0,0,0,0.1)',
+                  }}>
+                    +{total - avatarStackCount}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Paginated member list with inline explanation */}
+            <div style={{ marginTop: 6 }}>
+              {members.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map(p => {
+                const isSelected = selectedPerson?.id === p.id;
+                const personExplanation = isSelected ? explainPerson(p, rule, layers) : null;
+                return (
+                  <div key={p.id}>
+                    <PersonRow
+                      person={p}
+                      onClick={() => setSelectedPerson(isSelected ? null : p)}
+                      selected={isSelected}
+                      compact={compact}
+                    />
+                    {isSelected && personExplanation && (
+                      <div style={{
+                        margin: '0 0 4px 0',
+                        padding: '8px 10px 8px 12px',
+                        background: personExplanation.status === 'included' ? C.greenLight
+                          : personExplanation.status === 'excluded_by_layer' ? C.amberLight : C.redLight,
+                        borderRadius: '0 0 10px 10px',
+                        borderLeft: `2px solid ${
+                          personExplanation.status === 'included' ? C.green
+                            : personExplanation.status === 'excluded_by_layer' ? C.amber : C.red
+                        }`,
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <div style={{ color: C.text, fontSize: 12, lineHeight: 1.5 }}>
+                            {personExplanation.text}
+                          </div>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setSelectedPerson(null); }}
+                            style={{
+                              background: 'none', border: 'none', cursor: 'pointer',
+                              color: C.textMuted, fontSize: 14, padding: '0 2px', lineHeight: 1,
+                              flexShrink: 0, marginLeft: 8,
+                            }}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {total > PAGE_SIZE && (
+                <div style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '6px 0 0',
+                }}>
+                  <span style={{ fontSize: 12, color: C.textMuted }}>
+                    {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} of {total}
+                  </span>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <PaginationButton label="Prev" onClick={() => setPage(p => p - 1)} disabled={page === 0} />
+                    <PaginationButton label="Next" onClick={() => setPage(p => p + 1)} disabled={(page + 1) * PAGE_SIZE >= total} />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Excluded tab */}
+        {activeTab === 'excluded' && hasExcluded && (
+          <div>
             {excludedByLayers.map(({ layer, people }) => (
-              <div key={layer.id} style={{ marginBottom: 10 }}>
-                <div style={{ fontSize: 14, fontWeight: 500, color: C.text, marginBottom: 3 }}>
+              <div key={layer.id} style={{ marginBottom: excludedByLayers.length > 1 ? 12 : 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: C.text, marginBottom: 3 }}>
                   {layer.label}
                 </div>
-                <div style={{ fontSize: 13, color: C.textSecondary, marginBottom: 6, lineHeight: 1.4 }}>
+                <div style={{ fontSize: 13, color: C.textSecondary, lineHeight: 1.5, marginBottom: 8 }}>
                   {layer.description}
                 </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                  {people.slice(0, 5).map(p => (
-                    <span key={p.id} style={{
-                      fontSize: 12, fontWeight: 600, letterSpacing: 0.125,
-                      background: C.amberLight, color: C.amber,
-                      borderRadius: 9999, padding: '2px 8px',
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                  {people.slice(0, 8).map(p => (
+                    <div key={p.id} style={{
+                      display: 'flex', alignItems: 'center', gap: 8,
+                      padding: '5px 0',
                     }}>
-                      {p.name}
-                    </span>
+                      <Avatar name={p.name} size={24} />
+                      <span style={{ fontSize: 13, fontWeight: 500, color: C.text }}>{p.name}</span>
+                      <span style={{
+                        fontSize: 11, fontWeight: 600, color: C.amber,
+                        background: C.amberLight, borderRadius: 9999, padding: '1px 7px',
+                        marginLeft: 'auto',
+                      }}>
+                        Excluded
+                      </span>
+                    </div>
                   ))}
-                  {people.length > 5 && (
-                    <span style={{ fontSize: 12, color: C.textMuted, padding: '2px 4px' }}>
-                      +{people.length - 5} more
-                    </span>
+                  {people.length > 8 && (
+                    <div style={{ fontSize: 12, color: C.textMuted, padding: '4px 0' }}>
+                      +{people.length - 8} more
+                    </div>
                   )}
                 </div>
               </div>
             ))}
           </div>
         )}
-      </div>
 
-      {/* ═══ Divider 1 ═══ */}
-      <Divider compact={dividerCompact} />
-
-      {/* ═══ Section 2: Population member list ═══ */}
-      <div>
-        {total === 0 ? (
-          <div style={{ padding: '10px 0', color: C.textMuted, fontSize: 14 }}>
-            No one matches these conditions.
-          </div>
-        ) : (
-          <>
-            {/* Avatar stack header (only when >20 people, i.e. summary mode) */}
-            {!showFaces && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-                <div style={{ display: 'flex', alignItems: 'center' }}>
-                  {members.slice(0, avatarStackCount).map((p, i) => (
-                    <div key={p.id} style={{ marginLeft: i === 0 ? 0 : -8, zIndex: avatarStackCount - i, position: 'relative' }}>
-                      <Avatar name={p.name} size={28} />
-                    </div>
-                  ))}
-                  {total > avatarStackCount && (
-                    <div style={{
-                      width: 28, height: 28, borderRadius: '50%',
-                      background: C.surfaceAlt, color: C.textSecondary,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: 11, fontWeight: 600, marginLeft: -8,
-                      border: '1px solid rgba(0,0,0,0.1)',
-                    }}>
-                      +{total - avatarStackCount}
-                    </div>
-                  )}
-                </div>
-                <span style={{ fontSize: 14, fontWeight: 500, color: C.textSecondary }}>
-                  {total} people
+        {/* Impact tab */}
+        {activeTab === 'impact' && hasPolicies && (
+          <div>
+            {/* Delta warning banner */}
+            {hasDelta && (
+              <div style={{
+                display: 'flex', alignItems: 'flex-start', gap: 8,
+                padding: '8px 10px', marginBottom: 10,
+                background: C.amberLight, border: `1px solid ${C.amberBorder}`,
+                borderRadius: 8, fontSize: 13, color: C.text, lineHeight: 1.45,
+              }}>
+                <span style={{ flexShrink: 0, fontSize: 15, marginTop: -1 }}>⚠</span>
+                <span>
+                  This change affects <strong>{policies.length} {policies.length === 1 ? 'policy' : 'policies'}</strong>.
+                  {delta!.added.length > 0 && <> <strong style={{ color: C.green }}>+{delta!.added.length}</strong> {delta!.added.length === 1 ? 'person gains' : 'people gain'} coverage.</>}
+                  {delta!.removed.length > 0 && <> <strong style={{ color: C.red }}>−{delta!.removed.length}</strong> {delta!.removed.length === 1 ? 'person loses' : 'people lose'} coverage.</>}
                 </span>
               </div>
             )}
 
-            {/* Person rows */}
-            {showFaces ? (
-              <>
-                {members.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map(p => (
-                  <PersonRow
-                    key={p.id}
-                    person={p}
-                    onClick={() => setSelectedPerson(selectedPerson?.id === p.id ? null : p)}
-                    selected={selectedPerson?.id === p.id}
-                    compact={compact}
-                  />
-                ))}
-                {total > PAGE_SIZE && (
-                  <div style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    padding: '8px 0 2px',
+            <div style={{ fontSize: 13, color: C.textSecondary, marginBottom: 10 }}>
+              {totalAffected.toLocaleString()} people affected across {policies.length} {policies.length === 1 ? 'policy' : 'policies'}
+            </div>
+            {policies.map(p => {
+              const pc = tierColor(p.sensitivityTier);
+              return (
+                <div key={p.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '7px 10px', marginBottom: 4,
+                  background: C.surfaceAlt, borderRadius: 8,
+                  fontSize: 13,
+                }}>
+                  <span style={{
+                    fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 9999,
+                    background: pc.bg, color: pc.text,
+                    textTransform: 'uppercase', letterSpacing: 0.5,
+                    flexShrink: 0,
                   }}>
-                    <span style={{ fontSize: 13, color: C.textSecondary }}>
-                      {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} of {total}
-                    </span>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      <PaginationButton label="Prev" onClick={() => setPage(p => p - 1)} disabled={page === 0} />
-                      <PaginationButton label="Next" onClick={() => setPage(p => p + 1)} disabled={(page + 1) * PAGE_SIZE >= total} />
-                    </div>
-                  </div>
-                )}
-              </>
-            ) : (
-              <>
-                {(showAll ? members : members.slice(0, 5)).map((p, _i, arr) => {
-                  // When showAll + many members, cap the visible list and add internal scroll
-                  return (
-                    <PersonRow
-                      key={p.id}
-                      person={p}
-                      onClick={() => setSelectedPerson(selectedPerson?.id === p.id ? null : p)}
-                      selected={selectedPerson?.id === p.id}
-                      compact={compact}
-                    />
-                  );
-                })}
-                {!showAll && total > 5 && (
-                  <button
-                    onClick={() => setShowAll(true)}
-                    style={{
-                      background: 'none', border: 'none', cursor: 'pointer',
-                      color: C.accent, fontSize: 14, fontFamily: FONT, fontWeight: 500,
-                      padding: '8px 0',
-                    }}
-                  >
-                    Show all {total} people
-                  </button>
-                )}
-                {showAll && total > 20 && (
-                  <button
-                    onClick={() => { setShowAll(false); setSelectedPerson(null); }}
-                    style={{
-                      background: 'none', border: 'none', cursor: 'pointer',
-                      color: C.accent, fontSize: 14, fontFamily: FONT, fontWeight: 500,
-                      padding: '8px 0',
-                    }}
-                  >
-                    Show fewer
-                  </button>
-                )}
-              </>
-            )}
-
-            {/* Person explanation popover */}
-            {selectedPerson && explanation && (
-              <div style={{
-                marginTop: 8, padding: '12px 14px',
-                background: explanation.status === 'included' ? C.greenLight : explanation.status === 'excluded_by_layer' ? C.amberLight : C.redLight,
-                border: `1px solid ${C.border}`,
-                borderRadius: 12, boxShadow: S.card,
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <Avatar name={selectedPerson.name} size={24} />
-                    <span style={{ fontWeight: 600, fontSize: 14, color: C.text }}>{selectedPerson.name}</span>
-                  </div>
-                  <button
-                    onClick={() => setSelectedPerson(null)}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.textMuted, fontSize: 16, padding: '2px 4px', lineHeight: 1 }}
-                  >
-                    ×
-                  </button>
+                    {tierLabel(p.sensitivityTier)}
+                  </span>
+                  <span style={{ fontWeight: 500, color: C.text }}>{p.name}</span>
+                  <span style={{ color: C.textMuted, marginLeft: 'auto', fontSize: 12 }}>
+                    {p.affectedCount.toLocaleString()}
+                  </span>
                 </div>
-                <div style={{ color: C.text, fontSize: 14, lineHeight: 1.5 }}>
-                  {explanation.text}
-                </div>
-              </div>
-            )}
-          </>
+              );
+            })}
+          </div>
         )}
       </div>
-
-      {/* ═══ Divider 2 (only if policies exist) ═══ */}
-      {policies.length > 0 && <Divider compact={dividerCompact} />}
-
-      {/* ═══ Section 3: Downstream impact ═══ */}
-      {policies.length > 0 && (
-        <div>
-          <button
-            onClick={() => setImpactExpanded(!impactExpanded)}
-            style={{
-              background: 'none', border: 'none', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', gap: 8, width: '100%',
-              padding: 0, fontSize: 14, fontFamily: FONT, fontWeight: 500,
-              color: C.text, textAlign: 'left',
-            }}
-          >
-            {compact ? (
-              <>
-                <span style={{ fontWeight: 600 }}>
-                  {policies.length} {policies.length === 1 ? 'policy' : 'policies'}
-                </span>
-                <span style={{ color: C.textSecondary, fontWeight: 400 }}>
-                  · {totalAffected.toLocaleString()} affected
-                </span>
-              </>
-            ) : (
-              <>
-                <span>
-                  Referenced by <strong>{policies.length} {policies.length === 1 ? 'policy' : 'policies'}</strong>
-                </span>
-                <span style={{ color: C.textSecondary, fontWeight: 400 }}>
-                  · {totalAffected.toLocaleString()} people affected
-                </span>
-              </>
-            )}
-            <span style={{ marginLeft: 'auto', fontSize: 13, color: C.accent, fontWeight: 500, flexShrink: 0 }}>
-              {impactExpanded ? 'Hide' : 'Details'}
-            </span>
-          </button>
-
-          {impactExpanded && (
-            <div style={{ marginTop: 10, borderTop: '1px solid rgba(0,0,0,0.06)', paddingTop: 10 }}>
-              {policies.map(p => {
-                const pc = tierColor(p.sensitivityTier);
-                return (
-                  <div key={p.id} style={{
-                    display: 'flex', alignItems: 'center', gap: 8,
-                    padding: '6px 0', fontSize: 14,
-                    flexWrap: compact ? 'wrap' : 'nowrap',
-                  }}>
-                    <span style={{
-                      fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 9999,
-                      background: pc.bg, color: pc.text,
-                      textTransform: 'uppercase', letterSpacing: 0.5,
-                      flexShrink: 0,
-                    }}>
-                      {tierLabel(p.sensitivityTier)}
-                    </span>
-                    <span style={{ fontWeight: 500, color: C.text }}>{p.name}</span>
-                    <span style={{
-                      color: C.textSecondary, marginLeft: compact ? 0 : 'auto', fontSize: 13,
-                      ...(compact ? { width: '100%', paddingLeft: 50 } : {}),
-                    }}>
-                      {p.domain} · {p.affectedCount.toLocaleString()} people
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }

@@ -25,4 +25,8 @@ export const conceptLabels: Record<ConceptId, { name: string; hypothesis: string
     name: 'The Obvious Default',
     hypothesis: 'The straightforward thing, built well — flat filters, live preview, transparent layers.',
   },
+  F: {
+    name: 'The Embedded Experience',
+    hypothesis: 'Invest in output over input — group cards, NL-first reuse, bidirectional refinement, reimagined host flows.',
+  },
 };

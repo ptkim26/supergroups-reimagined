@@ -4,7 +4,7 @@ import path from 'path';
 
 export default defineConfig({
   plugins: [react()],
-  server: { port: 3000 },
+  server: { port: 3001 },
   resolve: {
     alias: {
       '@shell': path.resolve(__dirname, 'shell'),

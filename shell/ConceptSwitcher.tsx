@@ -7,7 +7,7 @@ interface Props {
 }
 
 const earlierIds: ConceptId[] = ['A', 'B', 'C', 'D'];
-const tabOrder: ConceptId[] = ['E', 'A', 'B', 'C', 'D'];
+const tabOrder: ConceptId[] = ['F', 'E', 'A', 'B', 'C', 'D'];
 
 export default function ConceptSwitcher({ activeConcept, onSelect }: Props) {
   if (complexity === 'complex' || activeConcept !== null) {
@@ -20,13 +20,23 @@ function SplashScreen({ onSelect }: { onSelect: (id: ConceptId) => void }) {
   return (
     <div style={styles.splash}>
       <h1 style={styles.title}>{projectName}</h1>
-      <p style={styles.subtitle}>Five prototype explorations — one recommended direction</p>
+      <p style={styles.subtitle}>Six prototype explorations — two recommended directions</p>
+
+      {/* Hero card for Concept F */}
+      <button onClick={() => onSelect('F')} style={{ ...styles.heroCard, borderColor: '#7C3AED' }}>
+        <div style={styles.heroTop}>
+          <span style={{ ...styles.heroBadge, background: '#7C3AED' }}>F</span>
+          <span style={{ ...styles.heroRecommended, color: '#7C3AED' }}>Latest exploration</span>
+        </div>
+        <span style={styles.heroName}>{conceptLabels.F.name}</span>
+        <span style={styles.heroHypothesis}>{conceptLabels.F.hypothesis}</span>
+      </button>
 
       {/* Hero card for Concept E */}
-      <button onClick={() => onSelect('E')} style={styles.heroCard}>
+      <button onClick={() => onSelect('E')} style={{ ...styles.heroCard, marginTop: '0.75rem' }}>
         <div style={styles.heroTop}>
           <span style={styles.heroBadge}>E</span>
-          <span style={styles.heroRecommended}>Recommended direction</span>
+          <span style={styles.heroRecommended}>Validated direction</span>
         </div>
         <span style={styles.heroName}>{conceptLabels.E.name}</span>
         <span style={styles.heroHypothesis}>{conceptLabels.E.hypothesis}</span>

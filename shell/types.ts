@@ -117,7 +117,7 @@ export interface PolicyRef {
 
 // ── Concept component contract ──────────────────────────────────────────────
 
-export type ConceptId = 'A' | 'B' | 'C' | 'D' | 'E';
+export type ConceptId = 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
 
 export interface ConceptProps {
   entryState: EntryState;

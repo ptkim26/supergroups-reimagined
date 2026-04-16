@@ -26,7 +26,7 @@ done
 echo ""
 
 if [ "$ALL_GOOD" = true ]; then
-  echo "All four concepts verified. Run 'npm run dev' to start on port 3000."
+  echo "All four concepts verified. Run 'npm run dev' to start on port 3001."
 else
   echo "Some concepts are missing or incomplete. See warnings above."
   exit 1

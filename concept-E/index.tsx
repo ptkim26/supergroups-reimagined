@@ -10,12 +10,6 @@ import type {
   PolicyRef,
   SensitivityTier,
 } from '../shell/types';
-import Layout1 from '../concept-E-layouts/layout-1-faceted-summary';
-import Layout2 from '../concept-E-layouts/layout-2-composition-strip';
-import Layout3 from '../concept-E-layouts/layout-3-unified-hero-card';
-import Layout4 from '../concept-E-layouts/layout-4-temporal-heartbeat';
-import Layout5 from '../concept-E-layouts/layout-5-split-panel';
-import Layout6 from '../concept-E-layouts/layout-6-waffle-grid';
 import Layout7 from '../concept-E-layouts/layout-7-baseline-refined';
 import RuleGroupEditor, { createEmptyRuleGroup, ruleGroupHasValidConditions, canRenderInEditor, type FilterSuggestion } from './rule-group-editor';
 
@@ -55,15 +49,6 @@ const S = {
   deep: 'rgba(0,0,0,0.01) 0px 1px 3px, rgba(0,0,0,0.02) 0px 3px 7px, rgba(0,0,0,0.02) 0px 7px 15px, rgba(0,0,0,0.04) 0px 14px 28px, rgba(0,0,0,0.05) 0px 23px 52px',
 };
 
-const LAYOUTS = [
-  { key: 1, label: 'Faceted Summary', icon: '◧' },
-  { key: 2, label: 'Composition Strip', icon: '━' },
-  { key: 3, label: 'Unified Hero', icon: '▣' },
-  { key: 4, label: 'Temporal Heartbeat', icon: '〜' },
-  { key: 5, label: 'Split Panel', icon: '◫' },
-  { key: 6, label: 'Waffle Grid', icon: '⊞' },
-  { key: 7, label: 'Baseline', icon: '▤' },
-] as const;
 
 // ── Field / value display helpers ─────────────────────────────────────────────
 
@@ -847,12 +832,14 @@ interface PopulationDisplayProps {
   excludedByLayers: { layer: EvaluationLayer; people: Person[] }[];
   policies: PolicyRef[];
   compact?: boolean;
+  delta?: {
+    added: Person[];
+    removed: Person[];
+  };
 }
 
 function PopulationDisplay({ variant, ...props }: PopulationDisplayProps & { variant: number }) {
-  const Layout = [Layout1, Layout2, Layout3, Layout4, Layout5, Layout6, Layout7][variant - 1];
-  if (!Layout) return null;
-  return <Layout {...props} />;
+  return <Layout7 {...props} />;
 }
 
 // ── Change diff panel ───────────────────────────────────────────────────────
@@ -1286,9 +1273,6 @@ function CreateView({ data, policyContext, inline, variant, highStakes }: {
       )}
 
       {/* Population display */}
-      <div style={{ fontSize: 11, fontWeight: 600, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 8 }}>
-        {LAYOUTS.find(l => l.key === variant)?.label ?? ''}
-      </div>
       <PopulationDisplay
         variant={variant}
         members={members}
@@ -1388,9 +1372,6 @@ function ViewMode({ group, data, inline, variant }: {
       </Section>
 
       {/* Population display */}
-      <div style={{ fontSize: 11, fontWeight: 600, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 8 }}>
-        {LAYOUTS.find(l => l.key === variant)?.label ?? ''}
-      </div>
       <PopulationDisplay
         variant={variant}
         members={members}
@@ -1489,9 +1470,6 @@ function EditMode({ group, data, inline, variant }: {
       </Section>
 
       {/* Population display */}
-      <div style={{ fontSize: 11, fontWeight: 600, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 8 }}>
-        {LAYOUTS.find(l => l.key === variant)?.label ?? ''}
-      </div>
       <PopulationDisplay
         variant={variant}
         members={currentMembers}
@@ -1501,14 +1479,8 @@ function EditMode({ group, data, inline, variant }: {
         excludedByLayers={excludedByLayers}
         policies={group.consumers}
         compact={inline}
+        delta={hasChanges ? { added, removed } : undefined}
       />
-
-      {/* Change diff */}
-      {hasChanges && (
-        <div style={{ marginBottom: 10 }}>
-          <ChangeDiff added={added} removed={removed} policies={group.consumers} />
-        </div>
-      )}
 
       {/* Save gate */}
       <div style={{ position: 'relative', marginTop: 8 }}>
@@ -1665,7 +1637,7 @@ function InlineSelectMode({ data, policyContext, variant }: {
 export default function ConceptE({ entryState }: { entryState: EntryState }) {
   const data = useMemo(() => buildExtendedData(entryState.data), [entryState.data]);
   const isInline = entryState.context === 'inline';
-  const [layoutVariant, setLayoutVariant] = useState(7);
+  const layoutVariant = 7;
 
   const content = useMemo(() => {
     const scenario = entryState.scenario;
@@ -1726,50 +1698,6 @@ export default function ConceptE({ entryState }: { entryState: EntryState }) {
     }}>
       {content}
 
-      {/* Floating layout HUD */}
-      <div style={{
-        position: 'fixed', bottom: 16, right: 16, zIndex: 9999,
-        background: '#ffffff', boxShadow: S.deep,
-        borderRadius: 12, padding: 8,
-      }}>
-        <div style={{
-          fontSize: 10, fontWeight: 600, color: C.textMuted,
-          textTransform: 'uppercase', letterSpacing: '0.5px',
-          marginBottom: 6, textAlign: 'center',
-        }}>
-          Layout
-        </div>
-        <div style={{ display: 'flex', gap: 4 }}>
-          {LAYOUTS.map(l => (
-            <div key={l.key} style={{ position: 'relative' }}>
-              <button
-                onClick={() => setLayoutVariant(l.key)}
-                title={l.label}
-                style={{
-                  width: 32, height: 32, borderRadius: 8, border: 'none',
-                  cursor: 'pointer', fontSize: 16, fontFamily: FONT,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  background: layoutVariant === l.key ? C.accent : 'transparent',
-                  color: layoutVariant === l.key ? '#ffffff' : C.textSecondary,
-                  transition: 'background 0.15s, color 0.15s',
-                }}
-                onMouseEnter={e => {
-                  if (layoutVariant !== l.key) {
-                    (e.currentTarget as HTMLElement).style.background = C.surfaceAlt;
-                  }
-                }}
-                onMouseLeave={e => {
-                  if (layoutVariant !== l.key) {
-                    (e.currentTarget as HTMLElement).style.background = 'transparent';
-                  }
-                }}
-              >
-                {l.icon}
-              </button>
-            </div>
-          ))}
-        </div>
-      </div>
     </div>
   );
 }

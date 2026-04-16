@@ -3,3 +3,4 @@ dist/
 concept-E-deck/
 .vercel/
 *.local
+.vercel
