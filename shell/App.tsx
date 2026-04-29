@@ -10,8 +10,9 @@ const ConceptC = React.lazy(() => import('../concept-C/index'));
 const ConceptD = React.lazy(() => import('../concept-D/index'));
 const ConceptE = React.lazy(() => import('../concept-E/index'));
 const ConceptF = React.lazy(() => import('../concept-F/index'));
+const ConceptFs = React.lazy(() => import('../concept-F-stepback/index'));
 
-const conceptComponents = { A: ConceptA, B: ConceptB, C: ConceptC, D: ConceptD, E: ConceptE, F: ConceptF };
+const conceptComponents = { A: ConceptA, B: ConceptB, C: ConceptC, D: ConceptD, E: ConceptE, F: ConceptF, Fs: ConceptFs };
 
 type ScenarioKey = 'view' | 'edit' | 'create' | 'create-high-stakes' | 'inline-select' | 'wrong-rule' | 'cold-open' | 'view-advanced' | 'view-legacy';
 
@@ -85,7 +86,7 @@ export default function App() {
           <span style={styles.conceptBadge}>{activeConcept}</span>
           <span style={styles.conceptName}>{conceptLabels[activeConcept].name}</span>
         </div>
-        {activeConcept !== 'E' && activeConcept !== 'F' && (
+        {activeConcept !== 'E' && activeConcept !== 'F' && activeConcept !== 'Fs' && (
           <ConceptSwitcher activeConcept={activeConcept} onSelect={setActiveConcept} />
         )}
       </header>

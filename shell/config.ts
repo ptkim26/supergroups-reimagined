@@ -29,4 +29,8 @@ export const conceptLabels: Record<ConceptId, { name: string; hypothesis: string
     name: 'The Embedded Experience',
     hypothesis: 'Invest in output over input — group cards, NL-first reuse, bidirectional refinement, reimagined host flows.',
   },
+  Fs: {
+    name: 'F (stepback) — flat multi-entity',
+    hypothesis: 'Archived: the original flat multi-entity overlay (HUD + inline breakdown + tabs + per-person badges). Preserved for A/B against the skip version in F.',
+  },
 };

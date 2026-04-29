@@ -44,9 +44,13 @@ export interface Person {
   location: string;
   country: string;
   employmentType: 'full_time' | 'part_time' | 'contractor';
-  roleState: 'active' | 'pending' | 'terminated';
+  roleState: 'active' | 'pending' | 'terminated' | 'probationary';
   startDate: string;
   title: string;
+  entity?: string;
+  titleVariant?: string;
+  fullTimeHoursPerWeek?: number;
+  costCenter?: string;
 }
 
 // ── Rule AST ────────────────────────────────────────────────────────────────
@@ -93,6 +97,8 @@ export interface SavedGroup {
   lastModifiedBy: string;
   lastModifiedAt: string;
   isLegacy?: boolean;
+  appliedEntities?: string[];
+  entityConsumers?: Record<string, PolicyRef[]>;
 }
 
 // ── Policies / downstream consumers ─────────────────────────────────────────
@@ -115,9 +121,18 @@ export interface PolicyRef {
   affectedCount: number;
 }
 
+// ── Admin authority (cross-entity authority simulator) ─────────────────────
+
+export type ReachLevel = 'none' | 'read' | 'propose' | 'full';
+
+export interface AdminRole {
+  homeEntity: string;                 // canonical entity name, or 'global'
+  reach: Record<string, ReachLevel>;  // per other-entity reach
+}
+
 // ── Concept component contract ──────────────────────────────────────────────
 
-export type ConceptId = 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
+export type ConceptId = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'Fs';
 
 export interface ConceptProps {
   entryState: EntryState;

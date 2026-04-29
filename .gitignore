@@ -4,3 +4,4 @@ concept-E-deck/
 .vercel/
 *.local
 .vercel
+tsconfig.tsbuildinfo

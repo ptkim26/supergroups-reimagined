@@ -1,21 +1,47 @@
 import type { Person, SavedGroup, PolicyRef, MockData, EvaluationLayer, EntryState } from './types';
 
 const people: Person[] = [
-  { id: 'p1',  name: 'Sarah Chen',        department: 'Engineering', location: 'San Francisco', country: 'US', employmentType: 'full_time',  roleState: 'active',     startDate: '2022-03-15', title: 'Senior Engineer' },
-  { id: 'p2',  name: 'Marcus Johnson',     department: 'Engineering', location: 'San Francisco', country: 'US', employmentType: 'full_time',  roleState: 'pending',    startDate: '2026-04-01', title: 'Software Engineer' },
-  { id: 'p3',  name: 'Aisha Patel',        department: 'Engineering', location: 'New York',      country: 'US', employmentType: 'full_time',  roleState: 'active',     startDate: '2023-01-10', title: 'Engineering Manager' },
-  { id: 'p4',  name: 'James O\'Brien',     department: 'Sales',       location: 'New York',      country: 'US', employmentType: 'full_time',  roleState: 'active',     startDate: '2021-06-01', title: 'Account Executive' },
-  { id: 'p5',  name: 'Priya Sharma',       department: 'Sales',       location: 'San Francisco', country: 'US', employmentType: 'full_time',  roleState: 'active',     startDate: '2023-09-12', title: 'Sales Manager' },
-  { id: 'p6',  name: 'David Kim',          department: 'Finance',     location: 'San Francisco', country: 'US', employmentType: 'full_time',  roleState: 'active',     startDate: '2022-11-20', title: 'Financial Analyst' },
-  { id: 'p7',  name: 'Elena Rodriguez',    department: 'Finance',     location: 'Austin',        country: 'US', employmentType: 'full_time',  roleState: 'active',     startDate: '2024-02-14', title: 'Controller' },
-  { id: 'p8',  name: 'Chris Nakamura',     department: 'Engineering', location: 'Austin',        country: 'US', employmentType: 'contractor',  roleState: 'active',     startDate: '2025-06-01', title: 'Contract Engineer' },
-  { id: 'p9',  name: 'Fatima Al-Hassan',   department: 'HR',          location: 'San Francisco', country: 'US', employmentType: 'full_time',  roleState: 'active',     startDate: '2021-01-05', title: 'HR Director' },
-  { id: 'p10', name: 'Tom Williams',       department: 'Engineering', location: 'London',        country: 'GB', employmentType: 'full_time',  roleState: 'active',     startDate: '2023-07-22', title: 'Staff Engineer' },
-  { id: 'p11', name: 'Rachel Foster',      department: 'Marketing',   location: 'New York',      country: 'US', employmentType: 'part_time',  roleState: 'active',     startDate: '2024-10-01', title: 'Content Strategist' },
-  { id: 'p12', name: 'Sam Okafor',         department: 'Engineering', location: 'San Francisco', country: 'US', employmentType: 'full_time',  roleState: 'terminated', startDate: '2020-08-15', title: 'Principal Engineer' },
-  { id: 'p13', name: 'Nina Kowalski',      department: 'Sales',       location: 'Austin',        country: 'US', employmentType: 'full_time',  roleState: 'active',     startDate: '2025-01-06', title: 'SDR' },
-  { id: 'p14', name: 'Alex Rivera',        department: 'Engineering', location: 'San Francisco', country: 'US', employmentType: 'full_time',  roleState: 'active',     startDate: '2022-05-30', title: 'Tech Lead' },
-  { id: 'p15', name: 'Jordan Lee',         department: 'Finance',     location: 'New York',      country: 'US', employmentType: 'contractor',  roleState: 'active',     startDate: '2025-11-01', title: 'Contract Accountant' },
+  { id: 'p1',  name: 'Sarah Chen',        department: 'Engineering', location: 'San Francisco', country: 'US', employmentType: 'full_time',  roleState: 'active',     startDate: '2022-03-15', title: 'Senior Engineer',        entity: 'US Corp',   fullTimeHoursPerWeek: 40 },
+  { id: 'p2',  name: 'Marcus Johnson',     department: 'Engineering', location: 'San Francisco', country: 'US', employmentType: 'full_time',  roleState: 'pending',    startDate: '2026-04-01', title: 'Software Engineer',      entity: 'US Corp',   fullTimeHoursPerWeek: 40 },
+  { id: 'p3',  name: 'Aisha Patel',        department: 'Engineering', location: 'New York',      country: 'US', employmentType: 'full_time',  roleState: 'active',     startDate: '2023-01-10', title: 'Engineering Manager',    entity: 'US Corp',   fullTimeHoursPerWeek: 40 },
+  { id: 'p4',  name: 'James O\'Brien',     department: 'Sales',       location: 'New York',      country: 'US', employmentType: 'full_time',  roleState: 'active',     startDate: '2021-06-01', title: 'Account Executive',      entity: 'US Corp',   fullTimeHoursPerWeek: 40 },
+  { id: 'p5',  name: 'Priya Sharma',       department: 'Sales',       location: 'San Francisco', country: 'US', employmentType: 'full_time',  roleState: 'active',     startDate: '2023-09-12', title: 'Sales Manager',          entity: 'US Corp',   fullTimeHoursPerWeek: 40 },
+  { id: 'p6',  name: 'David Kim',          department: 'Finance',     location: 'San Francisco', country: 'US', employmentType: 'full_time',  roleState: 'active',     startDate: '2022-11-20', title: 'Financial Analyst',      entity: 'US Corp',   fullTimeHoursPerWeek: 40 },
+  { id: 'p7',  name: 'Elena Rodriguez',    department: 'Finance',     location: 'Austin',        country: 'US', employmentType: 'full_time',  roleState: 'active',     startDate: '2024-02-14', title: 'Controller',             entity: 'US Corp',   fullTimeHoursPerWeek: 40 },
+  { id: 'p8',  name: 'Chris Nakamura',     department: 'Engineering', location: 'Austin',        country: 'US', employmentType: 'contractor',  roleState: 'active',     startDate: '2025-06-01', title: 'Contract Engineer',      entity: 'US Corp' },
+  { id: 'p9',  name: 'Fatima Al-Hassan',   department: 'HR',          location: 'San Francisco', country: 'US', employmentType: 'full_time',  roleState: 'active',     startDate: '2021-01-05', title: 'HR Director',            entity: 'US Corp',   fullTimeHoursPerWeek: 40 },
+  { id: 'p10', name: 'Tom Williams',       department: 'Engineering', location: 'London',        country: 'GB', employmentType: 'full_time',  roleState: 'active',     startDate: '2023-07-22', title: 'Staff Engineer',         entity: 'UK Ltd',    fullTimeHoursPerWeek: 35 },
+  { id: 'p11', name: 'Rachel Foster',      department: 'Marketing',   location: 'New York',      country: 'US', employmentType: 'part_time',  roleState: 'active',     startDate: '2024-10-01', title: 'Content Strategist',     entity: 'US Corp' },
+  { id: 'p12', name: 'Sam Okafor',         department: 'Engineering', location: 'San Francisco', country: 'US', employmentType: 'full_time',  roleState: 'terminated', startDate: '2020-08-15', title: 'Principal Engineer',     entity: 'US Corp',   fullTimeHoursPerWeek: 40 },
+  { id: 'p13', name: 'Nina Kowalski',      department: 'Sales',       location: 'Austin',        country: 'US', employmentType: 'full_time',  roleState: 'active',     startDate: '2025-01-06', title: 'SDR',                    entity: 'US Corp',   fullTimeHoursPerWeek: 40 },
+  { id: 'p14', name: 'Alex Rivera',        department: 'Engineering', location: 'San Francisco', country: 'US', employmentType: 'full_time',  roleState: 'active',     startDate: '2022-05-30', title: 'Tech Lead',              entity: 'US Corp',   fullTimeHoursPerWeek: 40 },
+  { id: 'p15', name: 'Jordan Lee',         department: 'Finance',     location: 'New York',      country: 'US', employmentType: 'contractor',  roleState: 'active',     startDate: '2025-11-01', title: 'Contract Accountant',    entity: 'US Corp' },
+  // Additional US Corp (11) — expand to reach ~25 US Corp
+  { id: 'p16', name: 'Maya Thompson',      department: 'Engineering', location: 'Seattle',       country: 'US', employmentType: 'full_time',  roleState: 'active',     startDate: '2022-08-01', title: 'Backend Engineer',       entity: 'US Corp',   fullTimeHoursPerWeek: 40 },
+  { id: 'p17', name: 'Ethan Walker',       department: 'Engineering', location: 'Chicago',       country: 'US', employmentType: 'full_time',  roleState: 'active',     startDate: '2023-05-18', title: 'Frontend Engineer',      entity: 'US Corp',   fullTimeHoursPerWeek: 40 },
+  { id: 'p18', name: 'Grace Liu',          department: 'Sales',       location: 'Chicago',       country: 'US', employmentType: 'full_time',  roleState: 'active',     startDate: '2024-03-22', title: 'Account Executive',      entity: 'US Corp',   fullTimeHoursPerWeek: 40 },
+  { id: 'p19', name: 'Daniel Brooks',      department: 'Marketing',   location: 'San Francisco', country: 'US', employmentType: 'full_time',  roleState: 'active',     startDate: '2021-11-08', title: 'Brand Manager',          entity: 'US Corp',   fullTimeHoursPerWeek: 40 },
+  { id: 'p20', name: 'Olivia Martinez',    department: 'HR',          location: 'Austin',        country: 'US', employmentType: 'full_time',  roleState: 'active',     startDate: '2023-02-14', title: 'People Partner',         entity: 'US Corp',   fullTimeHoursPerWeek: 40 },
+  { id: 'p21', name: 'Noah Bennett',       department: 'Finance',     location: 'New York',      country: 'US', employmentType: 'full_time',  roleState: 'active',     startDate: '2022-06-27', title: 'Finance Manager',        entity: 'US Corp',   fullTimeHoursPerWeek: 40 },
+  { id: 'p22', name: 'Hannah Schmidt',     department: 'Operations',  location: 'Seattle',       country: 'US', employmentType: 'full_time',  roleState: 'active',     startDate: '2024-09-03', title: 'Ops Lead',               entity: 'US Corp',   fullTimeHoursPerWeek: 40 },
+  { id: 'p23', name: 'Liam Anderson',      department: 'Legal',       location: 'New York',      country: 'US', employmentType: 'full_time',  roleState: 'active',     startDate: '2022-04-11', title: 'Associate Counsel',      entity: 'US Corp',   fullTimeHoursPerWeek: 40 },
+  { id: 'p24', name: 'Sofia Ramirez',      department: 'Engineering', location: 'Austin',        country: 'US', employmentType: 'full_time',  roleState: 'active',     startDate: '2023-10-02', title: 'Senior Engineer',        entity: 'US Corp',   fullTimeHoursPerWeek: 40 },
+  { id: 'p25', name: 'Oscar Nguyen',       department: 'Engineering', location: 'San Francisco', country: 'US', employmentType: 'full_time',  roleState: 'active',     startDate: '2024-01-29', title: 'Platform Engineer',      entity: 'US Corp',   fullTimeHoursPerWeek: 40 },
+  { id: 'p26', name: 'Isla Bennett',       department: 'Sales',       location: 'Seattle',       country: 'US', employmentType: 'full_time',  roleState: 'active',     startDate: '2025-03-17', title: 'SDR',                    entity: 'US Corp',   fullTimeHoursPerWeek: 40 },
+  // UK Ltd (7 additional, 8 total with p10). Drift: full-time = 35hr/week. Two probationary.
+  { id: 'p27', name: 'Oliver Hughes',      department: 'Engineering', location: 'London',        country: 'GB', employmentType: 'full_time',  roleState: 'active',      startDate: '2022-09-15', title: 'Engineering Manager',    entity: 'UK Ltd',    fullTimeHoursPerWeek: 35 },
+  { id: 'p28', name: 'Amelia Clarke',      department: 'Sales',       location: 'London',        country: 'GB', employmentType: 'full_time',  roleState: 'active',      startDate: '2023-06-06', title: 'Account Executive',      entity: 'UK Ltd',    fullTimeHoursPerWeek: 35 },
+  { id: 'p29', name: 'Harry Patel',        department: 'Finance',     location: 'London',        country: 'GB', employmentType: 'full_time',  roleState: 'active',      startDate: '2021-04-21', title: 'Finance Analyst',        entity: 'UK Ltd',    fullTimeHoursPerWeek: 35 },
+  { id: 'p30', name: 'Emily Dawson',       department: 'HR',          location: 'Manchester',    country: 'GB', employmentType: 'full_time',  roleState: 'active',      startDate: '2024-02-26', title: 'HR Business Partner',    entity: 'UK Ltd',    fullTimeHoursPerWeek: 35 },
+  { id: 'p31', name: 'George Wright',      department: 'Marketing',   location: 'London',        country: 'GB', employmentType: 'full_time',  roleState: 'probationary',startDate: '2026-02-01', title: 'Growth Marketer',        entity: 'UK Ltd',    fullTimeHoursPerWeek: 35 },
+  { id: 'p32', name: 'Freya Sullivan',     department: 'Engineering', location: 'Manchester',    country: 'GB', employmentType: 'full_time',  roleState: 'probationary',startDate: '2026-01-15', title: 'Frontend Engineer',      entity: 'UK Ltd',    fullTimeHoursPerWeek: 35 },
+  { id: 'p33', name: 'Jack Morgan',        department: 'Operations',  location: 'London',        country: 'GB', employmentType: 'full_time',  roleState: 'active',      startDate: '2022-07-19', title: 'Operations Manager',     entity: 'UK Ltd',    fullTimeHoursPerWeek: 35 },
+  // Ireland Ltd (5). Drift: IE uses "Software Developer" not "Engineer" for engineering roles; department is stored as '—' and cost center is canonical.
+  { id: 'p34', name: 'Siobhán Murphy',     department: '—',           location: 'Dublin',        country: 'IE', employmentType: 'full_time',  roleState: 'active',     startDate: '2023-08-28', title: 'Staff Software Developer', entity: 'Ireland Ltd', fullTimeHoursPerWeek: 37, titleVariant: 'Engineer', costCenter: 'DUB-ENG-001' },
+  { id: 'p35', name: 'Cillian Byrne',      department: '—',           location: 'Dublin',        country: 'IE', employmentType: 'full_time',  roleState: 'active',     startDate: '2024-05-13', title: 'Account Executive',      entity: 'Ireland Ltd', fullTimeHoursPerWeek: 37, costCenter: 'DUB-SLS-002' },
+  { id: 'p36', name: 'Aoife Kelly',        department: '—',           location: 'Dublin',        country: 'IE', employmentType: 'full_time',  roleState: 'active',     startDate: '2022-10-07', title: 'Financial Controller',   entity: 'Ireland Ltd', fullTimeHoursPerWeek: 37, costCenter: 'DUB-FIN-001' },
+  { id: 'p37', name: 'Liam Walsh',         department: '—',           location: 'Cork',          country: 'IE', employmentType: 'full_time',  roleState: 'active',     startDate: '2025-04-02', title: 'Software Developer',     entity: 'Ireland Ltd', fullTimeHoursPerWeek: 37, titleVariant: 'Engineer', costCenter: 'CRK-ENG-001' },
+  { id: 'p38', name: 'Niamh O\'Sullivan',  department: '—',           location: 'Dublin',        country: 'IE', employmentType: 'full_time',  roleState: 'active',     startDate: '2023-03-20', title: 'People Operations',      entity: 'Ireland Ltd', fullTimeHoursPerWeek: 37, costCenter: 'DUB-HR-001' },
 ];
 
 const roleStateLayer: EvaluationLayer = {
@@ -31,7 +57,7 @@ const scopeLayer: EvaluationLayer = {
   type: 'scope',
   label: 'US entity scope',
   description: 'This group is scoped to the US entity. Employees in other entities are excluded.',
-  excludedPeopleIds: ['p10'],
+  excludedPeopleIds: ['p10', 'p27', 'p28', 'p29', 'p30', 'p31', 'p32', 'p33', 'p34', 'p35', 'p36', 'p37', 'p38'],
 };
 
 const provisioningLayer: EvaluationLayer = {
@@ -40,6 +66,15 @@ const provisioningLayer: EvaluationLayer = {
   label: 'Benefits eligibility provisioning',
   description: 'Provisioning rule: only full-time employees are eligible for benefits enrollment.',
   excludedPeopleIds: ['p8', 'p11', 'p15'],
+};
+
+// Admin per legal entity. Used by the cross-entity authority simulator
+// to display "awaiting Tom Williams" / "visible to Aoife Kelly" messages
+// when an admin's reach into another entity is limited.
+export const ENTITY_ADMINS: Record<string, string> = {
+  'US Corp':     'Fatima Al-Hassan',
+  'UK Ltd':      'Tom Williams',
+  'Ireland Ltd': 'Aoife Kelly',
 };
 
 const policies: PolicyRef[] = [

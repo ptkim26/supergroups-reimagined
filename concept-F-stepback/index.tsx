@@ -10,10 +10,7 @@ import type {
   EvaluationLayer,
   PolicyRef,
   SensitivityTier,
-  AdminRole,
-  ReachLevel,
 } from '../shell/types';
-import { ENTITY_ADMINS } from '../shell/mockData';
 import BottomPillNav, { type BottomPillTabSpec } from './bottom-pill-nav';
 
 // ── Design tokens (copied from concept-E for visual consistency) ─────────────
@@ -181,65 +178,10 @@ function getExcludedByLayers(people: Person[], rule: RuleGroup, layers: Evaluati
 
 type OrgMode = 'standard' | 'multi-entity';
 const ENTITY_ORDER = ['US Corp', 'UK Ltd', 'Ireland Ltd'];
-const ALL_ENTITIES = ['US Corp', 'UK Ltd', 'Ireland Ltd'];
 
-// Canonical per-entity consumer map used by PerEntityImpactPanel.
-// In a real system this would be derived from a consumer-reference table.
-const ENTITY_CONSUMERS: Record<string, { name: string; domain: string }[]> = {
-  'US Corp':     [{ name: 'US Payroll Run', domain: 'payroll' }, { name: 'California Benefits', domain: 'benefits' }, { name: 'SF Office Policy', domain: 'it' }],
-  'UK Ltd':      [{ name: 'UK PAYE Payroll', domain: 'payroll' }, { name: 'UK Benefits Plan', domain: 'benefits' }],
-  'Ireland Ltd': [],
-};
-
-const isMultiEntity = (mode: OrgMode) => mode !== 'standard';
-
-const DEFAULT_ADMIN_ROLE: AdminRole = { homeEntity: 'global', reach: {} };
-
-// Reach level resolution. 'global' admin always has full reach everywhere.
-// Otherwise: home entity = 'full', other entities = whatever's in role.reach (default 'none').
-function reachInto(role: AdminRole, entity: string): ReachLevel {
-  if (role.homeEntity === 'global') return 'full';
-  if (role.homeEntity === entity) return 'full';
-  return role.reach[entity] ?? 'none';
-}
-
-function reachAtLeast(level: ReachLevel, minimum: ReachLevel): boolean {
-  const order: ReachLevel[] = ['none', 'read', 'propose', 'full'];
-  return order.indexOf(level) >= order.indexOf(minimum);
-}
-
-// Redact a name to its initials with mid bullets, e.g. "Tom Williams" → "T••• W•••••••s".
-function redactName(name: string): string {
-  return name
-    .split(' ')
-    .map(part => {
-      if (part.length <= 1) return part;
-      const first = part[0];
-      const last = part[part.length - 1];
-      const middle = '•'.repeat(Math.max(1, part.length - 2));
-      return part.length <= 2 ? `${first}${middle}` : `${first}${middle}${last}`;
-    })
-    .join(' ');
-}
-
-const OrgModeContext = React.createContext<{
-  orgMode: OrgMode;
-  context: 'standalone' | 'inline';
-  scopedEntities: string[];
-  setScopedEntities: (entities: string[]) => void;
-  adminRole: AdminRole;
-  setAdminRole: (r: AdminRole) => void;
-  pendingEntities: string[];
-  setPendingEntities: (e: string[]) => void;
-}>({
+const OrgModeContext = React.createContext<{ orgMode: OrgMode; context: 'standalone' | 'inline' }>({
   orgMode: 'standard',
   context: 'standalone',
-  scopedEntities: ALL_ENTITIES,
-  setScopedEntities: () => {},
-  adminRole: DEFAULT_ADMIN_ROLE,
-  setAdminRole: () => {},
-  pendingEntities: [],
-  setPendingEntities: () => {},
 });
 
 const GroupValidityContext = React.createContext<{
@@ -265,153 +207,6 @@ function groupByEntity(members: Person[]): { entity: string; people: Person[] }[
     if (!ENTITY_ORDER.includes(k)) ordered.push({ entity: k, people: buckets.get(k)! });
   }
   return ordered;
-}
-
-// Always returns a bucket for every canonical entity — used by the bar strip
-// and stacked preview so the "N realities" story includes zero-result entities.
-function groupByAllEntities(allPeople: Person[], members: Person[], scopedEntities: string[]): { entity: string; people: Person[]; inScope: boolean }[] {
-  const memberByEntity = new Map<string, Person[]>();
-  for (const p of members) {
-    const k = p.entity ?? 'Unassigned';
-    if (!memberByEntity.has(k)) memberByEntity.set(k, []);
-    memberByEntity.get(k)!.push(p);
-  }
-  return ENTITY_ORDER.map(e => ({
-    entity: e,
-    people: memberByEntity.get(e) ?? [],
-    inScope: scopedEntities.includes(e),
-  }));
-}
-
-// ── Rule field extraction + drift detection ─────────────────────────────────
-
-function getRuleFields(rule: RuleNode, acc: Set<string> = new Set()): Set<string> {
-  if (rule.type === 'condition') { if (rule.field) acc.add(rule.field); return acc; }
-  for (const c of rule.children) getRuleFields(c, acc);
-  return acc;
-}
-
-function getRuleValues(rule: RuleNode, field: string, acc: Set<string> = new Set()): Set<string> {
-  if (rule.type === 'condition') {
-    if (rule.field === field) {
-      if (Array.isArray(rule.value)) for (const v of rule.value) acc.add(String(v));
-      else if (rule.value != null) acc.add(String(rule.value));
-    }
-    return acc;
-  }
-  for (const c of rule.children) getRuleValues(c, field, acc);
-  return acc;
-}
-
-type DriftKind = 'title_taxonomy' | 'employment_hours' | 'missing_attribute' | 'role_state';
-
-interface DriftFinding {
-  kind: DriftKind;
-  entity: string;
-  headline: string;
-  detail: string;
-  affectedPeople: Person[];
-}
-
-function detectDrift(rule: RuleGroup, allPeople: Person[], scopedEntities: string[]): DriftFinding[] {
-  const findings: DriftFinding[] = [];
-  const fields = getRuleFields(rule);
-  const entities = ENTITY_ORDER.filter(e => scopedEntities.includes(e));
-
-  // 1. Title/taxonomy drift — rule filters on title containing "Engineer" but IE uses "Software Developer" (with titleVariant marker)
-  const titleValues = getRuleValues(rule, 'title');
-  if (fields.has('title')) {
-    for (const entity of entities) {
-      const entPeople = allPeople.filter(p => p.entity === entity);
-      const variantPeople = entPeople.filter(p =>
-        p.titleVariant &&
-        [...titleValues].some(v => v.toLowerCase().includes(p.titleVariant!.toLowerCase()) || p.titleVariant!.toLowerCase().includes(v.toLowerCase())),
-      );
-      if (variantPeople.length > 0) {
-        const sampleVariant = variantPeople[0].titleVariant!;
-        const sampleActual = variantPeople[0].title;
-        findings.push({
-          kind: 'title_taxonomy',
-          entity,
-          headline: `"${sampleVariant}" title doesn't exist in ${entity}`,
-          detail: `${entity} uses "${sampleActual}" instead. ${variantPeople.length} ${variantPeople.length === 1 ? 'person is' : 'people are'} silently excluded by this rule even though they do the same role.`,
-          affectedPeople: variantPeople,
-        });
-      }
-    }
-  }
-
-  // 2. Employment-type drift — rule filters on employmentType=full_time but hours differ across entities
-  if (fields.has('employmentType')) {
-    const empValues = getRuleValues(rule, 'employmentType');
-    if (empValues.has('full_time')) {
-      const hoursByEntity = new Map<string, Set<number>>();
-      for (const p of allPeople) {
-        if (!p.entity || !scopedEntities.includes(p.entity)) continue;
-        if (p.employmentType !== 'full_time' || !p.fullTimeHoursPerWeek) continue;
-        if (!hoursByEntity.has(p.entity)) hoursByEntity.set(p.entity, new Set());
-        hoursByEntity.get(p.entity)!.add(p.fullTimeHoursPerWeek);
-      }
-      const distinct = new Set<number>();
-      for (const s of hoursByEntity.values()) for (const h of s) distinct.add(h);
-      if (distinct.size > 1) {
-        for (const [entity, hours] of hoursByEntity.entries()) {
-          const hoursList = [...hours].sort((a, b) => a - b);
-          const entPeople = allPeople.filter(p => p.entity === entity && p.employmentType === 'full_time');
-          findings.push({
-            kind: 'employment_hours',
-            entity,
-            headline: `"Full-time" means ${hoursList.join('/')}hr/week in ${entity}`,
-            detail: `Other entities use different full-time thresholds. ${entPeople.length} ${entPeople.length === 1 ? 'person is' : 'people are'} classified as full-time here under this local definition.`,
-            affectedPeople: entPeople,
-          });
-        }
-      }
-    }
-  }
-
-  // 3. Missing-attribute drift — rule uses a field that some entity doesn't populate (department = '—')
-  for (const field of fields) {
-    for (const entity of entities) {
-      const entPeople = allPeople.filter(p => p.entity === entity);
-      if (entPeople.length === 0) continue;
-      const missing = entPeople.filter(p => {
-        const v = (p as any)[field];
-        return v === '—' || v === null || v === undefined || v === '';
-      });
-      if (missing.length > 0 && missing.length === entPeople.length) {
-        const alt = field === 'department' ? 'cost centers' : 'an alternate field';
-        findings.push({
-          kind: 'missing_attribute',
-          entity,
-          headline: `${entity} doesn't track ${fieldLabels[field] || field}`,
-          detail: `${entity} uses ${alt} instead. All ${entPeople.length} people here are excluded by any rule that filters on this field.`,
-          affectedPeople: missing,
-        });
-      }
-    }
-  }
-
-  // 4. Role-state drift — rule filters on roleState=active but some entities have probationary
-  if (fields.has('roleState')) {
-    const rsValues = getRuleValues(rule, 'roleState');
-    if (rsValues.has('active')) {
-      for (const entity of entities) {
-        const prob = allPeople.filter(p => p.entity === entity && p.roleState === 'probationary');
-        if (prob.length > 0) {
-          findings.push({
-            kind: 'role_state',
-            entity,
-            headline: `${entity} has "probationary" role state`,
-            detail: `Probationary employees don't match role state = Active. ${prob.length} ${prob.length === 1 ? 'person is' : 'people are'} silently excluded by this rule in ${entity}, even though they're working here today.`,
-            affectedPeople: prob,
-          });
-        }
-      }
-    }
-  }
-
-  return findings;
 }
 
 // ── Rule to plain-language summary ───────────────────────────────────────────
@@ -468,44 +263,10 @@ interface ExplainResult {
   conditions: ConditionResult[];
 }
 
-function explainPerson(person: Person, rule: RuleGroup, layers: EvaluationLayer[], orgMode: OrgMode = 'standard', scopedEntities: string[] = ALL_ENTITIES, adminRole: AdminRole = DEFAULT_ADMIN_ROLE): ExplainResult {
-  const multi = isMultiEntity(orgMode);
-  const entitySuffix = multi && person.entity ? ` in ${person.entity}` : '';
-
-  // Authority redaction: viewer has no read reach into this person's entity.
-  if (multi && person.entity && reachInto(adminRole, person.entity) === 'none') {
-    const admin = ENTITY_ADMINS[person.entity];
-    return {
-      status: 'excluded_by_layer',
-      text: `Details visible to ${admin || `${person.entity} admins`} only`,
-      layerLabel: `Visible to ${admin || person.entity}`,
-      layerDescription: `You don't have reach into ${person.entity}. Switch admin role or upgrade reach to see why ${redactName(person.name)} matches.`,
-      conditions: [],
-    };
-  }
-
-  // Multi-entity: person's entity has been declined or not confirmed in the row block
-  if (orgMode === 'multi-entity' && person.entity && !scopedEntities.includes(person.entity)) {
-    return {
-      status: 'excluded_by_layer',
-      text: `Excluded — ${person.entity} is not in this group's scope`,
-      layerLabel: `Scope excludes ${person.entity}`,
-      layerDescription: `This group is scoped to ${scopedEntities.join(', ')}. ${person.name} works in ${person.entity}, so they're outside the group's scope regardless of the rule.`,
-      conditions: [],
-    };
-  }
-
+function explainPerson(person: Person, rule: RuleGroup, layers: EvaluationLayer[]): ExplainResult {
   const layer = layers.find(l => l.excludedPeopleIds.includes(person.id));
   if (layer) {
-    return {
-      status: 'excluded_by_layer',
-      text: `Excluded by "${layer.label}"${entitySuffix}`,
-      layerLabel: multi && person.entity ? `${layer.label} · ${person.entity}` : layer.label,
-      layerDescription: multi && person.entity
-        ? `${layer.description} (Evaluated against ${person.entity}.)`
-        : layer.description,
-      conditions: [],
-    };
+    return { status: 'excluded_by_layer', text: `Excluded by "${layer.label}"`, layerLabel: layer.label, layerDescription: layer.description, conditions: [] };
   }
   const conditions: ConditionResult[] = [];
   function collect(node: RuleNode) {
@@ -521,9 +282,9 @@ function explainPerson(person: Person, rule: RuleGroup, layers: EvaluationLayer[
   const matched = evaluateRule(person, rule);
   if (!matched) {
     const failed = conditions.filter(c => !c.passed);
-    return { status: 'excluded_by_rule', text: `Doesn't match${entitySuffix}: ${failed.map(c => `${c.fieldLabel} is "${c.actual}"`).join('; ')}`, conditions };
+    return { status: 'excluded_by_rule', text: `Doesn't match: ${failed.map(c => `${c.fieldLabel} is "${c.actual}"`).join('; ')}`, conditions };
   }
-  return { status: 'included', text: `Matches all conditions${entitySuffix}`, conditions };
+  return { status: 'included', text: 'Matches all conditions', conditions };
 }
 
 // ── Suggest rule adjustment ──────────────────────────────────────────────────
@@ -698,777 +459,6 @@ function tierColor(tier: SensitivityTier) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// MULTI-ENTITY PRIMITIVES (skip version)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-// Bar strip — unmissable "one rule, N realities" visual. Authority-aware:
-// entities outside the admin's reach render dashed with redacted "?" counts;
-// pending-approval entities render as ghost bars in amber.
-function EntityBarStrip({ allPeople, members, scopedEntities, compact, onClickEntity, activeEntity }: {
-  allPeople: Person[];
-  members: Person[];
-  scopedEntities: string[];
-  compact?: boolean;
-  onClickEntity?: (entity: string) => void;
-  activeEntity?: string;
-}) {
-  const { adminRole, pendingEntities } = React.useContext(OrgModeContext);
-  const buckets = groupByAllEntities(allPeople, members, scopedEntities);
-  const max = Math.max(1, ...buckets.map(b => b.people.length));
-  const hasAny = buckets.some(b => b.people.length > 0);
-  if (!hasAny) return null;
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: compact ? 4 : 6, marginTop: compact ? 8 : 10 }}>
-      {buckets.map(b => {
-        const pct = (b.people.length / max) * 100;
-        const outOfScope = !b.inScope;
-        const isPending = pendingEntities.includes(b.entity);
-        const reach = reachInto(adminRole, b.entity);
-        const visible = reachAtLeast(reach, 'read');
-        const isActive = activeEntity === b.entity;
-        const clickable = !!onClickEntity;
-        const dashed = !visible || isPending;
-        const fillColor = isPending ? C.amber : C.accent;
-        return (
-          <button
-            key={b.entity}
-            disabled={!clickable}
-            onClick={() => onClickEntity?.(b.entity)}
-            style={{
-              display: 'grid',
-              gridTemplateColumns: compact ? '90px 1fr 28px' : '110px 1fr 32px',
-              alignItems: 'center',
-              gap: 10,
-              padding: compact ? '3px 4px' : '4px 6px',
-              border: 'none',
-              background: isActive ? C.accentLight : 'transparent',
-              borderRadius: 6,
-              fontFamily: FONT,
-              textAlign: 'left' as const,
-              cursor: clickable ? 'pointer' : 'default',
-              opacity: outOfScope ? 0.5 : 1,
-              transition: 'background 0.1s',
-            }}
-            onMouseEnter={e => { if (clickable && !isActive) (e.currentTarget as HTMLElement).style.background = C.surfaceAlt; }}
-            onMouseLeave={e => { if (clickable && !isActive) (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
-          >
-            <span style={{
-              fontSize: compact ? 12 : 13,
-              fontWeight: 500,
-              color: isActive ? C.accent : C.textSecondary,
-              textDecoration: outOfScope ? 'line-through' : 'none',
-              whiteSpace: 'nowrap' as const,
-              overflow: 'hidden', textOverflow: 'ellipsis',
-            }}>{isPending ? `${b.entity} ⟳` : b.entity}</span>
-            <span style={{
-              position: 'relative',
-              height: compact ? 10 : 12,
-              background: dashed ? 'transparent' : C.surfaceAlt,
-              border: dashed ? `1px dashed ${isPending ? C.amberBorder : C.border}` : 'none',
-              borderRadius: 3,
-              overflow: 'hidden',
-            }}>
-              <span style={{
-                position: 'absolute', inset: 0,
-                width: `${pct}%`,
-                background: dashed ? 'transparent' : (isActive ? C.accent : b.people.length === 0 ? 'transparent' : fillColor),
-                opacity: isActive ? 1 : b.people.length === 0 ? 1 : 0.6,
-                borderRadius: 3,
-                transition: 'width 0.25s ease-out, opacity 0.1s',
-              }} />
-            </span>
-            <span style={{ fontSize: compact ? 12 : 13, fontWeight: 600, color: isActive ? C.accent : (visible ? C.text : C.textMuted), textAlign: 'right' as const }}>
-              {visible ? b.people.length : '?'}
-            </span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-// Drift indicator — authority-aware: headlines remain visible (knowing drift
-// exists is load-bearing), affected-people names are redacted when the admin
-// has no read reach into the affected entity.
-function DriftIndicator({ findings }: { findings: DriftFinding[] }) {
-  const { adminRole } = React.useContext(OrgModeContext);
-  const [expanded, setExpanded] = useState<Set<number>>(new Set());
-  if (findings.length === 0) return null;
-  const toggle = (i: number) => {
-    const next = new Set(expanded);
-    if (next.has(i)) next.delete(i); else next.add(i);
-    setExpanded(next);
-  };
-  return (
-    <div style={{
-      marginTop: 10, padding: '10px 12px',
-      background: C.amberLight,
-      border: `1px solid ${C.amberBorder}`,
-      borderRadius: 10,
-    }}>
-      <div style={{ fontSize: 12, fontWeight: 600, color: C.amber, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M6 1.5 11 10H1L6 1.5Z" /><path d="M6 5v2.5" /><circle cx="6" cy="9" r="0.5" fill="currentColor" />
-        </svg>
-        This rule evaluates differently across entities
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        {findings.map((f, i) => {
-          const open = expanded.has(i);
-          return (
-            <div key={i}>
-              <button
-                onClick={() => toggle(i)}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 6, width: '100%',
-                  padding: '4px 0', border: 'none', background: 'transparent',
-                  cursor: 'pointer', fontFamily: FONT, textAlign: 'left' as const,
-                }}
-              >
-                <span style={{ fontSize: 11, color: C.amber, width: 10 }}>{open ? '▾' : '▸'}</span>
-                <span style={{ fontSize: 13, color: C.text, fontWeight: 500 }}>{f.entity}:</span>
-                <span style={{ fontSize: 13, color: C.textSecondary }}>{f.headline}</span>
-              </button>
-              {open && (
-                <div style={{ padding: '4px 16px 8px 16px', fontSize: 13, color: C.textSecondary, lineHeight: 1.5 }}>
-                  {f.detail}
-                  {f.affectedPeople.length > 0 && (() => {
-                    const reach = reachInto(adminRole, f.entity);
-                    const visible = reachAtLeast(reach, 'read');
-                    return (
-                      <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap' as const, gap: 4 }}>
-                        {f.affectedPeople.slice(0, 6).map(p => (
-                          <span key={p.id} style={{
-                            fontSize: 12, padding: '2px 8px',
-                            background: visible ? C.surface : C.surfaceAlt,
-                            border: `1px ${visible ? 'solid' : 'dashed'} ${C.amberBorder}`,
-                            borderRadius: 9999,
-                            color: visible ? C.text : C.textMuted,
-                            fontFamily: visible ? FONT : 'ui-monospace, SFMono-Regular, monospace',
-                          }}>{visible ? p.name : redactName(p.name)}</span>
-                        ))}
-                        {f.affectedPeople.length > 6 && (
-                          <span style={{ fontSize: 12, color: C.textMuted, padding: '2px 8px' }}>+{f.affectedPeople.length - 6} more</span>
-                        )}
-                        {!visible && (
-                          <span style={{ fontSize: 12, color: C.textMuted, padding: '2px 8px', fontStyle: 'italic' }}>
-                            visible to {ENTITY_ADMINS[f.entity] || `${f.entity} admins`}
-                          </span>
-                        )}
-                      </div>
-                    );
-                  })()}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-// Group-level entity scope — shown in scoped multi-entity mode above the rule.
-// Authority-aware: per entity, derives one of five states from adminRole + scopedEntities + pendingEntities.
-type EntityScopeState = 'authored' | 'authored-out-of-reach' | 'pending' | 'includable-requires-propose' | 'includable-directly' | 'blocked';
-
-function GroupLevelEntityScope() {
-  const { scopedEntities, setScopedEntities, adminRole, pendingEntities, setPendingEntities } = React.useContext(OrgModeContext);
-
-  const stateFor = (entity: string): EntityScopeState => {
-    const reach = reachInto(adminRole, entity);
-    const isScoped = scopedEntities.includes(entity);
-    const isPending = pendingEntities.includes(entity);
-    if (isPending) return 'pending';
-    if (isScoped) {
-      return reach === 'full' ? 'authored' : 'authored-out-of-reach';
-    }
-    if (reach === 'full') return 'includable-directly';
-    if (reach === 'propose') return 'includable-requires-propose';
-    return 'blocked';
-  };
-
-  const toggle = (entity: string) => {
-    if (scopedEntities.includes(entity)) {
-      if (scopedEntities.length === 1) return;
-      setScopedEntities(scopedEntities.filter(e => e !== entity));
-    } else {
-      setScopedEntities([...scopedEntities, entity].sort((a, b) => ENTITY_ORDER.indexOf(a) - ENTITY_ORDER.indexOf(b)));
-    }
-  };
-
-  const requestAccess = (entity: string) => {
-    if (pendingEntities.includes(entity)) return;
-    setPendingEntities([...pendingEntities, entity]);
-  };
-
-  return (
-    <div style={{
-      padding: '10px 12px',
-      border: `1px dashed ${C.purpleBorder}`,
-      background: C.purpleLight,
-      borderRadius: 10,
-      display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' as const,
-    }}>
-      <span style={{ fontSize: 11, fontWeight: 700, color: C.purple, textTransform: 'uppercase' as const, letterSpacing: 0.5 }}>Scope</span>
-      <span style={{ fontSize: 13, color: C.textSecondary }}>This group applies to:</span>
-      {ALL_ENTITIES.map(e => {
-        const s = stateFor(e);
-        const admin = ENTITY_ADMINS[e];
-        switch (s) {
-          case 'authored':
-          case 'includable-directly': {
-            const on = s === 'authored';
-            return (
-              <button
-                key={e}
-                onClick={() => toggle(e)}
-                style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 6,
-                  padding: '4px 10px', borderRadius: 9999,
-                  border: `1px solid ${on ? C.purple : C.border}`,
-                  background: on ? C.purple : C.surface,
-                  color: on ? '#fff' : C.textSecondary,
-                  fontSize: 12, fontWeight: 600, fontFamily: FONT, cursor: 'pointer',
-                  transition: 'all 0.1s',
-                }}
-              >
-                <span style={{ fontSize: 11 }}>{on ? '✓' : ''}</span>
-                {e}
-              </button>
-            );
-          }
-          case 'authored-out-of-reach':
-            return (
-              <span
-                key={e}
-                title={`Already in this group's scope. Editable only by ${admin}.`}
-                style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 6,
-                  padding: '4px 10px', borderRadius: 9999,
-                  border: `1px solid ${C.border}`,
-                  background: C.surfaceAlt,
-                  color: C.textSecondary,
-                  fontSize: 12, fontWeight: 600, fontFamily: FONT,
-                }}
-              >
-                <span style={{ fontSize: 11 }}>🔒</span>
-                {e}
-              </span>
-            );
-          case 'pending':
-            return (
-              <span
-                key={e}
-                title={`Awaiting ${admin}'s approval`}
-                style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 6,
-                  padding: '4px 10px', borderRadius: 9999,
-                  border: `1px dashed ${C.amberBorder}`,
-                  background: C.amberLight,
-                  color: C.amber,
-                  fontSize: 12, fontWeight: 600, fontFamily: FONT,
-                }}
-              >
-                ⟳ {e} — awaiting {admin}
-              </span>
-            );
-          case 'includable-requires-propose':
-            return (
-              <button
-                key={e}
-                onClick={() => requestAccess(e)}
-                title={`Requires ${admin}'s approval to include`}
-                style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 6,
-                  padding: '4px 10px', borderRadius: 9999,
-                  border: `1px dashed ${C.border}`,
-                  background: C.surface,
-                  color: C.textSecondary,
-                  fontSize: 12, fontWeight: 600, fontFamily: FONT, cursor: 'pointer',
-                  transition: 'all 0.1s',
-                }}
-                onMouseEnter={ev => { (ev.currentTarget as HTMLElement).style.borderColor = C.accent; (ev.currentTarget as HTMLElement).style.color = C.accent; }}
-                onMouseLeave={ev => { (ev.currentTarget as HTMLElement).style.borderColor = C.border; (ev.currentTarget as HTMLElement).style.color = C.textSecondary; }}
-              >
-                ↗ Request {e}
-              </button>
-            );
-          case 'blocked':
-            return (
-              <span
-                key={e}
-                title={`You don't have reach into ${e}. Switch admin role or upgrade reach to access.`}
-                style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 6,
-                  padding: '4px 10px', borderRadius: 9999,
-                  border: `1px solid ${C.border}`,
-                  background: C.surfaceAlt,
-                  color: C.textMuted,
-                  fontSize: 12, fontWeight: 600, fontFamily: FONT,
-                  opacity: 0.55,
-                  cursor: 'not-allowed',
-                }}
-              >
-                ⊘ {e}
-              </span>
-            );
-        }
-      })}
-    </div>
-  );
-}
-
-// Per-entity impact panel — replaces flat change-safety summary in multi-entity modes.
-// Authority-aware: rows degrade based on the admin's reach into each entity.
-function PerEntityImpactPanel({ allPeople, currentRule, layers, previousMemberIds, scopedEntities }: {
-  allPeople: Person[];
-  currentRule: RuleGroup;
-  layers: EvaluationLayer[];
-  previousMemberIds: string[];
-  scopedEntities: string[];
-}) {
-  const { adminRole } = React.useContext(OrgModeContext);
-  const prev = new Set(previousMemberIds);
-  const currentMembers = getMembersForRule(allPeople, currentRule, layers);
-  const current = new Set(currentMembers.map(m => m.id));
-
-  const rows = ENTITY_ORDER.map(entity => {
-    const entPeople = allPeople.filter(p => p.entity === entity);
-    const added = entPeople.filter(p => current.has(p.id) && !prev.has(p.id));
-    const removed = entPeople.filter(p => prev.has(p.id) && !current.has(p.id));
-    const consumers = ENTITY_CONSUMERS[entity] ?? [];
-    const inScope = scopedEntities.includes(entity);
-    const reach = reachInto(adminRole, entity);
-    return { entity, added, removed, consumers, inScope, reach };
-  });
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase' as const, letterSpacing: 0.5, marginBottom: 2 }}>
-        Impact by entity
-      </div>
-      {rows.map(r => {
-        const admin = ENTITY_ADMINS[r.entity];
-        const reachNote =
-          !r.inScope ? 'out of scope'
-          : r.reach === 'none' ? `Changes to this entity require ${admin || `${r.entity} admin`} to review.`
-          : r.reach === 'read' ? `Visible to ${admin || `${r.entity} admins`} for review.`
-          : r.reach === 'propose' ? `Change will require ${admin || `${r.entity} admin`}'s approval before taking effect.`
-          : r.consumers.length === 0 ? 'no downstream consumers'
-          : `→ ${r.consumers.map(c => c.name).join(', ')}`;
-        const showCounts = r.reach !== 'none' || r.inScope === false;
-        const muted = !r.inScope || r.reach === 'none';
-        return (
-          <div key={r.entity} style={{
-            display: 'grid',
-            gridTemplateColumns: '110px auto 1fr',
-            gap: 12, alignItems: 'center',
-            padding: '6px 10px',
-            background: muted ? C.surfaceAlt : C.surface,
-            border: `1px solid ${C.border}`,
-            borderRadius: 8,
-            opacity: muted ? 0.65 : 1,
-          }}>
-            <span style={{ fontSize: 13, fontWeight: 500, color: C.text, textDecoration: !r.inScope ? 'line-through' : 'none' }}>
-              {r.entity}
-            </span>
-            <span style={{ fontSize: 13, display: 'flex', gap: 10, alignItems: 'center' }}>
-              {showCounts && r.inScope ? (
-                <>
-                  <span style={{ color: r.added.length > 0 ? C.green : C.textMuted, fontWeight: 600 }}>+{r.added.length}</span>
-                  <span style={{ color: r.removed.length > 0 ? C.red : C.textMuted, fontWeight: 600 }}>−{r.removed.length}</span>
-                </>
-              ) : (
-                <span style={{ color: C.textMuted, fontWeight: 600 }}>···</span>
-              )}
-            </span>
-            <span style={{ fontSize: 12, color: C.textMuted, textAlign: 'right' as const, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>
-              {reachNote}
-            </span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// Stacked per-entity preview — three mini-previews, one per entity. Each has
-// its own count, own exclusion layer indicator, own member list. Redacts
-// rows for entities outside the admin's reach.
-function StackedEntityPreview({ allPeople, members, rule, layers, scopedEntities, onApplyAdjustment, compact }: {
-  allPeople: Person[];
-  members: Person[];
-  rule: RuleGroup;
-  layers: EvaluationLayer[];
-  scopedEntities: string[];
-  onApplyAdjustment?: (condition: RuleCondition) => void;
-  compact?: boolean;
-}) {
-  const { adminRole } = React.useContext(OrgModeContext);
-  const buckets = groupByAllEntities(allPeople, members, scopedEntities);
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      {buckets.map(b => {
-        if (!b.inScope) {
-          return (
-            <div key={b.entity} style={{
-              padding: '8px 12px', background: C.surfaceAlt,
-              border: `1px dashed ${C.border}`, borderRadius: 10,
-              display: 'flex', alignItems: 'center', gap: 8,
-              opacity: 0.65,
-            }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: C.textSecondary, textDecoration: 'line-through' }}>{b.entity}</span>
-              <span style={{ fontSize: 12, color: C.textMuted }}>excluded from this group's scope</span>
-            </div>
-          );
-        }
-        const reach = reachInto(adminRole, b.entity);
-        const visible = reachAtLeast(reach, 'read');
-        const admin = ENTITY_ADMINS[b.entity];
-
-        // Redacted bucket — admin doesn't have read reach into this entity
-        if (!visible) {
-          return (
-            <div key={b.entity} style={{
-              padding: compact ? '8px 10px' : '10px 12px',
-              background: C.surfaceAlt,
-              border: `1px dashed ${C.border}`,
-              borderRadius: 10,
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                <span style={{ fontSize: 13, fontWeight: 700, color: C.textSecondary }}>{b.entity}</span>
-                <span style={{ fontSize: 13, fontWeight: 500, color: C.textMuted }}>
-                  {b.people.length} {b.people.length === 1 ? 'person' : 'people'} match here
-                </span>
-              </div>
-              <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 6 }}>
-                Visible to {admin || `${b.entity} admins`} only
-              </div>
-              {b.people.slice(0, compact ? 3 : 5).map(p => (
-                <div key={p.id} style={{
-                  display: 'flex', alignItems: 'center', gap: 10,
-                  padding: compact ? '3px 6px' : '4px 8px',
-                  borderRadius: 6,
-                  opacity: 0.7,
-                }}>
-                  <div style={{
-                    width: compact ? 22 : 26, height: compact ? 22 : 26,
-                    borderRadius: '50%', background: C.surface,
-                    border: `1px dashed ${C.border}`, flexShrink: 0,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: compact ? 10 : 11, color: C.textMuted,
-                  }}>•••</div>
-                  <div style={{ fontSize: 13, color: C.textMuted, fontFamily: 'ui-monospace, SFMono-Regular, monospace' }}>
-                    {redactName(p.name)}
-                  </div>
-                </div>
-              ))}
-              {b.people.length > (compact ? 3 : 5) && (
-                <div style={{ fontSize: 12, color: C.textMuted, padding: '4px 8px' }}>
-                  +{b.people.length - (compact ? 3 : 5)} more in {b.entity}
-                </div>
-              )}
-            </div>
-          );
-        }
-
-        // Per-entity exclusion layer impact (people in this entity excluded by layers)
-        const entityPool = allPeople.filter(p => p.entity === b.entity);
-        const excludedInEntity = getExcludedByLayers(entityPool, rule, layers);
-        const excludedCount = excludedInEntity.reduce((s, x) => s + x.people.length, 0);
-        return (
-          <div key={b.entity} style={{
-            padding: compact ? '8px 10px' : '10px 12px',
-            background: C.surface,
-            border: `1px solid ${C.border}`,
-            borderRadius: 10,
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{b.entity}</span>
-              <span style={{ fontSize: 13, fontWeight: 500, color: C.textSecondary }}>
-                {b.people.length} {b.people.length === 1 ? 'person' : 'people'}
-              </span>
-              {excludedCount > 0 && (
-                <span style={{
-                  fontSize: 11, fontWeight: 600, color: C.amber, background: C.amberLight,
-                  borderRadius: 9999, padding: '1px 7px',
-                }}>
-                  {excludedCount} excluded in {b.entity}
-                </span>
-              )}
-            </div>
-            {b.people.length === 0 ? (
-              <div style={{ fontSize: 13, color: C.textMuted, padding: '4px 0' }}>
-                No one in {b.entity} matches this rule.
-              </div>
-            ) : (
-              <div>
-                {b.people.slice(0, compact ? 3 : 5).map(p => (
-                  <div key={p.id} style={{
-                    display: 'flex', alignItems: 'center', gap: 10,
-                    padding: compact ? '4px 6px' : '5px 8px',
-                    borderRadius: 6,
-                  }}>
-                    <Avatar name={p.name} size={compact ? 22 : 26} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 500, color: C.text }}>{p.name}</div>
-                      {!compact && (
-                        <div style={{ fontSize: 12, color: C.textSecondary }}>{p.title}</div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-                {b.people.length > (compact ? 3 : 5) && (
-                  <div style={{ fontSize: 12, color: C.textMuted, padding: '4px 8px' }}>
-                    +{b.people.length - (compact ? 3 : 5)} more in {b.entity}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// ─── EntityDecisionBlock — the dumber multi-entity surface ──────────────────
-//
-// Replaces (in the authoring surface): GroupLevelEntityScope, DriftIndicator,
-// EntityBarStrip, StackedEntityPreview, PerEntityImpactPanel.
-//
-// Pattern: System Proposes, Admin Reacts. One inline block, one row per entity
-// the rule touches, each row is either a confirmation, a question, or pending.
-// All authority + drift + scope decisions live in row state — no separate
-// vocabulary surfaces.
-
-type EntityRowState =
-  | 'auto-confirmed'       // home entity (or US Corp for Global admin) — no question
-  | 'pending-decision'     // full reach, awaiting admin Yes/No
-  | 'requires-propose'     // propose reach, awaiting Request
-  | 'awaiting'             // request sent, awaiting other admin
-  | 'confirmed'            // admin clicked Yes
-  | 'declined'             // admin clicked No
-  | 'out-of-reach-info';   // none reach — informational only
-
-function EntityDecisionBlock({
-  allPeople,
-  rule,
-  layers,
-  isEdit,
-  previousMemberIds,
-  declined,
-  setDeclined,
-}: {
-  allPeople: Person[];
-  rule: RuleGroup;
-  layers: EvaluationLayer[];
-  isEdit: boolean;
-  previousMemberIds: string[];
-  declined: string[];
-  setDeclined: (d: string[]) => void;
-}) {
-  const { adminRole, scopedEntities, setScopedEntities, pendingEntities, setPendingEntities } = React.useContext(OrgModeContext);
-
-  // Compute matches per entity using the rule (ignoring scope filtering — we
-  // want to show "would have matched" even for declined entities).
-  const allMembers = useMemo(
-    () => allPeople.filter(p => evaluateRule(p, rule) && !layers.some(l => l.excludedPeopleIds.includes(p.id))),
-    [allPeople, rule, layers],
-  );
-  const previousSet = useMemo(() => new Set(previousMemberIds), [previousMemberIds]);
-  const allDriftFindings = useMemo(
-    () => detectDrift(rule, allPeople, ALL_ENTITIES),
-    [rule, allPeople],
-  );
-  const driftByEntity = useMemo(() => {
-    const map = new Map<string, DriftFinding[]>();
-    for (const f of allDriftFindings) {
-      if (!map.has(f.entity)) map.set(f.entity, []);
-      map.get(f.entity)!.push(f);
-    }
-    return map;
-  }, [allDriftFindings]);
-
-  const homeEntity = adminRole.homeEntity === 'global' ? 'US Corp' : adminRole.homeEntity;
-
-  const rows = ENTITY_ORDER.map(entity => {
-    const entityMembers = allMembers.filter(p => p.entity === entity);
-    const matchCount = entityMembers.length;
-    const reach = reachInto(adminRole, entity);
-    const visible = reachAtLeast(reach, 'read');
-    const isHome = entity === homeEntity;
-    const isConfirmed = scopedEntities.includes(entity);
-    const isPending = pendingEntities.includes(entity);
-    const isDeclined = declined.includes(entity);
-    const findings = driftByEntity.get(entity) ?? [];
-
-    let state: EntityRowState;
-    if (isPending) state = 'awaiting';
-    else if (isDeclined) state = 'declined';
-    else if (isHome) state = isConfirmed ? 'auto-confirmed' : 'auto-confirmed';
-    else if (reach === 'none' && matchCount > 0) state = 'out-of-reach-info';
-    else if (isConfirmed) state = 'confirmed';
-    else if (reachAtLeast(reach, 'full')) state = 'pending-decision';
-    else if (reach === 'propose' || reach === 'read') state = 'requires-propose';
-    else state = 'pending-decision';
-
-    // For edit scenario, compute the diff against previous members for this entity
-    const added = isEdit ? entityMembers.filter(p => !previousSet.has(p.id)).length : 0;
-    const removed = isEdit
-      ? allPeople.filter(p => p.entity === entity && previousSet.has(p.id) && !allMembers.some(m => m.id === p.id)).length
-      : 0;
-
-    return { entity, matchCount, state, reach, visible, findings, added, removed, isHome };
-  }).filter(r => r.matchCount > 0 || r.state === 'awaiting' || r.state === 'declined');
-
-  if (rows.length === 0) return null;
-
-  const totalConfirmed = rows
-    .filter(r => r.state === 'auto-confirmed' || r.state === 'confirmed')
-    .reduce((s, r) => s + r.matchCount, 0);
-  const totalEntitiesEngaged = rows.length;
-
-  const confirm = (entity: string) => {
-    setDeclined(declined.filter(e => e !== entity));
-    if (!scopedEntities.includes(entity)) {
-      setScopedEntities([...scopedEntities, entity].sort((a, b) => ENTITY_ORDER.indexOf(a) - ENTITY_ORDER.indexOf(b)));
-    }
-  };
-  const decline = (entity: string) => {
-    setScopedEntities(scopedEntities.filter(e => e !== entity));
-    if (!declined.includes(entity)) setDeclined([...declined, entity]);
-  };
-  const requestAccess = (entity: string) => {
-    if (!pendingEntities.includes(entity)) setPendingEntities([...pendingEntities, entity]);
-  };
-  const reopen = (entity: string) => {
-    setDeclined(declined.filter(e => e !== entity));
-  };
-  const revoke = (entity: string) => {
-    setScopedEntities(scopedEntities.filter(e => e !== entity));
-  };
-
-  return (
-    <div style={{
-      padding: '12px 14px',
-      background: C.surface,
-      border: `1px solid ${C.border}`,
-      borderRadius: 12,
-      boxShadow: S.card,
-    }}>
-      <div style={{ fontSize: 13, color: C.textSecondary, marginBottom: 10 }}>
-        This rule matches <strong style={{ color: C.text }}>{allMembers.length}</strong> {allMembers.length === 1 ? 'person' : 'people'} across {totalEntitiesEngaged} {totalEntitiesEngaged === 1 ? 'entity' : 'entities'}.
-        {' '}<span style={{ color: C.textMuted }}>{totalConfirmed} confirmed for this group.</span>
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {rows.map(r => {
-          const admin = ENTITY_ADMINS[r.entity];
-          const driftHint = r.findings.length > 0 ? r.findings[0].headline : null;
-          const editDiff = isEdit && (r.added > 0 || r.removed > 0)
-            ? <span style={{ color: C.textMuted, fontSize: 12 }}> (+{r.added} −{r.removed} since last save)</span>
-            : null;
-
-          // Status icon + base color
-          const icon = r.state === 'confirmed' || r.state === 'auto-confirmed' ? '✓'
-            : r.state === 'declined' ? '⊘'
-            : r.state === 'awaiting' ? '⟳'
-            : '?';
-          const iconColor = r.state === 'confirmed' || r.state === 'auto-confirmed' ? C.green
-            : r.state === 'declined' ? C.textMuted
-            : r.state === 'awaiting' ? C.amber
-            : C.accent;
-          const bg = r.state === 'confirmed' || r.state === 'auto-confirmed' ? C.greenLight
-            : r.state === 'declined' ? C.surfaceAlt
-            : r.state === 'awaiting' ? C.amberLight
-            : r.state === 'out-of-reach-info' ? C.surfaceAlt
-            : C.accentLight;
-          const border = r.state === 'confirmed' || r.state === 'auto-confirmed' ? C.greenBorder
-            : r.state === 'declined' ? C.border
-            : r.state === 'awaiting' ? C.amberBorder
-            : r.state === 'out-of-reach-info' ? C.border
-            : C.accentBorder;
-
-          return (
-            <div key={r.entity} style={{
-              display: 'flex',
-              alignItems: 'flex-start',
-              gap: 10,
-              padding: '8px 10px',
-              background: bg,
-              border: `1px solid ${border}`,
-              borderRadius: 8,
-            }}>
-              <span style={{ fontSize: 14, fontWeight: 700, color: iconColor, width: 14, textAlign: 'center', lineHeight: '20px' }}>{icon}</span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, color: C.text, lineHeight: 1.5 }}>
-                  <strong>{r.entity}</strong>
-                  {' — '}
-                  {r.state === 'declined'
-                    ? <>excluded ({r.matchCount} would have matched)</>
-                    : r.state === 'out-of-reach-info'
-                    ? <>{r.matchCount} would match. <span style={{ color: C.textMuted }}>Visible only to {admin || `${r.entity} admins`}.</span></>
-                    : <>{r.matchCount} {r.matchCount === 1 ? 'person' : 'people'}{editDiff}</>}
-                  {r.isHome && r.state === 'auto-confirmed' && (
-                    <span style={{ color: C.textMuted, fontSize: 12 }}> (your entity)</span>
-                  )}
-                </div>
-                {driftHint && r.state !== 'declined' && r.state !== 'out-of-reach-info' && (
-                  <div style={{ fontSize: 12, color: C.textSecondary, marginTop: 2, lineHeight: 1.45 }}>
-                    {r.findings[0].detail}
-                  </div>
-                )}
-                {r.state === 'awaiting' && (
-                  <div style={{ fontSize: 12, color: C.amber, marginTop: 2 }}>
-                    awaiting {admin || `${r.entity} admin`}
-                  </div>
-                )}
-              </div>
-              {/* Action area */}
-              <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexShrink: 0 }}>
-                {r.state === 'pending-decision' && (
-                  <>
-                    <button onClick={() => confirm(r.entity)} style={pillBtn(true)}>Yes</button>
-                    <button onClick={() => decline(r.entity)} style={pillBtn(false)}>No</button>
-                  </>
-                )}
-                {r.state === 'requires-propose' && (
-                  <button onClick={() => requestAccess(r.entity)} style={pillBtn(false)}>↗ Request</button>
-                )}
-                {r.state === 'out-of-reach-info' && (
-                  <button onClick={() => requestAccess(r.entity)} style={pillBtn(false)}>Notify</button>
-                )}
-                {(r.state === 'confirmed' || r.state === 'auto-confirmed') && !r.isHome && (
-                  <button onClick={() => revoke(r.entity)} style={{ ...pillBtn(false), color: C.textMuted, borderColor: 'transparent' }}>Undo</button>
-                )}
-                {r.state === 'declined' && (
-                  <button onClick={() => reopen(r.entity)} style={{ ...pillBtn(false), color: C.textMuted, borderColor: 'transparent' }}>Reopen</button>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function pillBtn(primary: boolean): React.CSSProperties {
-  return {
-    padding: '4px 12px',
-    borderRadius: 9999,
-    border: `1px solid ${primary ? C.accent : C.border}`,
-    background: primary ? C.accent : C.surface,
-    color: primary ? '#fff' : C.text,
-    fontSize: 12,
-    fontWeight: 600,
-    fontFamily: FONT,
-    cursor: 'pointer',
-  };
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // FEATURE 1: THE GROUP CARD
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1480,19 +470,12 @@ function GroupCard({ group, people, onExpand, compact, selected, onSelect }: {
   selected?: boolean;
   onSelect?: () => void;
 }) {
-  const { orgMode, scopedEntities, adminRole } = React.useContext(OrgModeContext);
-  const scopedPeople = useMemo(
-    () => isMultiEntity(orgMode) ? people.filter(p => !p.entity || scopedEntities.includes(p.entity)) : people,
-    [people, orgMode, scopedEntities, adminRole],
-  );
-  const members = useMemo(() => getMembersForRule(scopedPeople, group.rule, group.evaluationLayers), [scopedPeople, group]);
-  const excludedByLayers = useMemo(() => getExcludedByLayers(scopedPeople, group.rule, group.evaluationLayers), [scopedPeople, group]);
+  const { orgMode } = React.useContext(OrgModeContext);
+  const members = useMemo(() => getMembersForRule(people, group.rule, group.evaluationLayers), [people, group]);
+  const excludedByLayers = useMemo(() => getExcludedByLayers(people, group.rule, group.evaluationLayers), [people, group]);
   const totalExcluded = excludedByLayers.reduce((sum, x) => sum + x.people.length, 0);
   const { text: summaryText, overflow } = useMemo(() => ruleToCompactSummary(group.rule), [group.rule]);
-  const driftFindings = useMemo(
-    () => isMultiEntity(orgMode) ? detectDrift(group.rule, people, scopedEntities) : [],
-    [group.rule, people, orgMode, scopedEntities, adminRole],
-  );
+  const entityBreakdown = useMemo(() => groupByEntity(members), [members]);
 
   const handleClick = onSelect || onExpand;
 
@@ -1536,14 +519,14 @@ function GroupCard({ group, people, onExpand, compact, selected, onSelect }: {
         </div>
       </div>
 
-      {/* Bar strip (multi-entity mode) — unmissable "one rule, N realities" */}
-      {isMultiEntity(orgMode) && (
-        <EntityBarStrip allPeople={people} members={members} scopedEntities={scopedEntities} compact={compact} />
-      )}
-
-      {/* Drift indicator (multi-entity, non-compact) */}
-      {isMultiEntity(orgMode) && !compact && driftFindings.length > 0 && (
-        <DriftIndicator findings={driftFindings} />
+      {/* Entity breakdown (multi-entity mode only) */}
+      {orgMode === 'multi-entity' && members.length > 0 && (
+        <div style={{ fontSize: 13, color: C.textMuted, marginTop: 6 }}>
+          <span style={{ color: C.textSecondary }}>{members.length} people</span>
+          {entityBreakdown.map(({ entity, people: ep }) => (
+            <span key={entity}> · {entity} {ep.length}</span>
+          ))}
+        </div>
       )}
 
       {/* Evaluation layer indicator + consumer count */}
@@ -1874,7 +857,6 @@ function SpatialGroupCard({ group, people, onDeselect }: {
   people: Person[];
   onDeselect: () => void;
 }) {
-  const { orgMode, scopedEntities, adminRole } = React.useContext(OrgModeContext);
   const [depth, setDepth] = useState<SpatialDepth>('resting');
   const [selectedPerson, setSelectedPerson] = useState<Person | null>(null);
 
@@ -1884,8 +866,8 @@ function SpatialGroupCard({ group, people, onDeselect }: {
   const { text: summaryText, overflow } = useMemo(() => ruleToCompactSummary(group.rule), [group.rule]);
 
   const explanation = useMemo(() =>
-    selectedPerson ? explainPerson(selectedPerson, group.rule, group.evaluationLayers, orgMode, scopedEntities, adminRole) : null,
-  [selectedPerson, group.rule, group.evaluationLayers, orgMode, scopedEntities, adminRole]);
+    selectedPerson ? explainPerson(selectedPerson, group.rule, group.evaluationLayers) : null,
+  [selectedPerson, group.rule, group.evaluationLayers]);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -2130,7 +1112,6 @@ function ConversationalGroupCard({ group, people, onDeselect }: {
   people: Person[];
   onDeselect: () => void;
 }) {
-  const { orgMode, scopedEntities, adminRole } = React.useContext(OrgModeContext);
   const [query, setQuery] = useState('');
   const [activeIntent, setActiveIntent] = useState<InspectionIntent>(null);
   const [selectedPersonName, setSelectedPersonName] = useState<string | null>(null);
@@ -2180,8 +1161,8 @@ function ConversationalGroupCard({ group, people, onDeselect }: {
 
   const personExplanation = useMemo(() => {
     if (!matchedPerson) return null;
-    return explainPerson(matchedPerson, group.rule, group.evaluationLayers, orgMode, scopedEntities, adminRole);
-  }, [matchedPerson, group.rule, group.evaluationLayers, orgMode, scopedEntities, adminRole]);
+    return explainPerson(matchedPerson, group.rule, group.evaluationLayers);
+  }, [matchedPerson, group.rule, group.evaluationLayers]);
 
   const lensLabel = activeIntent?.type === 'members' ? `Members (${members.length})`
     : activeIntent?.type === 'layers' ? `System filters (${totalExcluded} excluded)`
@@ -2494,8 +1475,8 @@ function NLEntryPoint({ people, savedGroups, onSelectGroup, onCreateFromConditio
   autoFocus?: boolean;
   inlineResults?: boolean;
 }) {
-  const { orgMode, context, scopedEntities, adminRole, pendingEntities } = React.useContext(OrgModeContext);
-  const showScopeLine = isMultiEntity(orgMode) && context !== 'inline';
+  const { orgMode, context } = React.useContext(OrgModeContext);
+  const showScopeLine = orgMode === 'multi-entity' && context !== 'inline';
   const [query, setQuery] = useState('');
   const [focused, setFocused] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -2573,8 +1554,12 @@ function NLEntryPoint({ people, savedGroups, onSelectGroup, onCreateFromConditio
         )}
       </div>
 
-      {/* Scope line removed — the EntityDecisionBlock surfaces this information
-          inline with each entity row. Keeping the NL input clean. */}
+      {/* Entity scope line (multi-entity, non-inline only) */}
+      {showScopeLine && (
+        <div style={{ fontSize: 12, color: C.textMuted, marginTop: 6 }}>
+          Matching across all 3 entities · US Corp, UK Ltd, Ireland Ltd
+        </div>
+      )}
 
       {/* Results — dropdown when chrome, inline flow when embedded in a surface */}
       {showResults && (
@@ -2729,20 +1714,28 @@ function BidirectionalPreview({ members, allPeople, rule, layers, onApplyAdjustm
   onApplyAdjustment?: (condition: RuleCondition) => void;
   compact?: boolean;
 }) {
-  const { orgMode, scopedEntities, adminRole } = React.useContext(OrgModeContext);
+  const { orgMode } = React.useContext(OrgModeContext);
+  const showEntityBadges = orgMode === 'multi-entity';
 
   const [selectedPerson, setSelectedPerson] = useState<Person | null>(null);
   const [page, setPage] = useState(0);
+  const [entityFilter, setEntityFilter] = useState<string>('all');
   const PAGE_SIZE = compact ? 5 : 8;
 
+  const entityBreakdown = useMemo(() => groupByEntity(members), [members]);
+  const showEntityTabs = orgMode === 'multi-entity' && entityBreakdown.length > 1;
+  const visibleMembers = useMemo(
+    () => (showEntityTabs && entityFilter !== 'all' ? members.filter(m => m.entity === entityFilter) : members),
+    [members, showEntityTabs, entityFilter],
+  );
   const total = members.length;
-  const visibleMembers = members;
-  const visibleTotal = total;
+  const visibleTotal = visibleMembers.length;
 
-  // Stacked-per-entity rendering moved into EntityDecisionBlock. Preview is now
-  // a single flat list regardless of org mode — entity work happens in the row block.
+  useEffect(() => { setPage(0); }, [entityFilter]);
+  // Reset filter to 'all' when multi-entity is turned off so the count stays correct
+  useEffect(() => { if (!showEntityTabs) setEntityFilter('all'); }, [showEntityTabs]);
 
-  const explanation = selectedPerson ? explainPerson(selectedPerson, rule, layers, orgMode, scopedEntities, adminRole) : null;
+  const explanation = selectedPerson ? explainPerson(selectedPerson, rule, layers) : null;
   const adjustment = selectedPerson && explanation?.status === 'included'
     ? suggestAdjustment(selectedPerson, members, rule)
     : null;
@@ -2771,7 +1764,31 @@ function BidirectionalPreview({ members, allPeople, rule, layers, onApplyAdjustm
         )}
       </div>
 
-      {/* Flat list (entity work moved to EntityDecisionBlock) */}
+      {/* Entity filter tabs — multi-entity, non-inline only */}
+      {showEntityTabs && (
+        <div style={{ display: 'flex', gap: 4, marginBottom: 10, flexWrap: 'wrap' }}>
+          {[{ key: 'all', label: 'All', count: total }, ...entityBreakdown.map(g => ({ key: g.entity, label: g.entity, count: g.people.length }))].map(t => {
+            const active = entityFilter === t.key;
+            return (
+              <button
+                key={t.key}
+                onClick={() => setEntityFilter(t.key)}
+                style={{
+                  padding: '4px 10px', borderRadius: 9999, border: `1px solid ${active ? C.accentBorder : 'transparent'}`,
+                  fontSize: 12, fontWeight: 500, fontFamily: FONT, cursor: 'pointer',
+                  background: active ? C.accentLight : 'transparent',
+                  color: active ? C.accent : C.textSecondary,
+                  transition: 'all 0.1s',
+                }}
+              >
+                {t.label} ({t.count})
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Person list — clickable for bidirectional refinement */}
       {visibleMembers.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map(p => (
         <button
           key={p.id}
@@ -2791,7 +1808,14 @@ function BidirectionalPreview({ members, allPeople, rule, layers, onApplyAdjustm
             <div style={{ fontSize: 14, fontWeight: 500, color: C.text, display: 'flex', alignItems: 'center', gap: 6 }}>
               {p.name}
               {p.roleState === 'pending' && <span style={{ fontSize: 11, fontWeight: 600, color: C.amber, background: C.amberLight, borderRadius: 9999, padding: '1px 7px' }}>Pending</span>}
-              {p.roleState === 'probationary' && <span style={{ fontSize: 11, fontWeight: 600, color: C.amber, background: C.amberLight, borderRadius: 9999, padding: '1px 7px' }}>Probationary</span>}
+              {showEntityBadges && p.entity && (
+                <span style={{
+                  fontSize: 11, fontWeight: 500, color: C.textSecondary,
+                  background: C.surfaceAlt, borderRadius: 9999, padding: '1px 7px',
+                }}>
+                  {p.entity}
+                </span>
+              )}
             </div>
             {!compact && (
               <div style={{ fontSize: 13, color: C.textSecondary, marginTop: 1 }}>
@@ -2802,7 +1826,7 @@ function BidirectionalPreview({ members, allPeople, rule, layers, onApplyAdjustm
         </button>
       ))}
 
-      {/* Pagination (grouped view only) */}
+      {/* Pagination */}
       {visibleTotal > PAGE_SIZE && (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0' }}>
           <span style={{ fontSize: 13, color: C.textSecondary }}>
@@ -3293,7 +2317,6 @@ function LiveSpatialPreview({ rule, layers, members, excludedByLayers, totalExcl
   excludedByLayers: { layer: EvaluationLayer; people: Person[] }[];
   totalExcluded: number;
 }) {
-  const { orgMode, scopedEntities, adminRole } = React.useContext(OrgModeContext);
   type Depth = 'summary' | 'members' | 'layers' | 'person';
   const [depth, setDepth] = useState<Depth>('summary');
   const [selectedPerson, setSelectedPerson] = useState<Person | null>(null);
@@ -3309,8 +2332,8 @@ function LiveSpatialPreview({ rule, layers, members, excludedByLayers, totalExcl
   }, [depth]);
 
   const explanation = useMemo(() =>
-    selectedPerson ? explainPerson(selectedPerson, rule, layers, orgMode, scopedEntities, adminRole) : null,
-    [selectedPerson, rule, layers, orgMode, scopedEntities, adminRole]);
+    selectedPerson ? explainPerson(selectedPerson, rule, layers) : null,
+    [selectedPerson, rule, layers]);
 
   const breadcrumb: { label: string; action: () => void }[] = [
     { label: 'Preview', action: () => { setDepth('summary'); setSelectedPerson(null); } },
@@ -3487,7 +2510,6 @@ function LiveConvoPreview({ rule, layers, members, excludedByLayers, totalExclud
   excludedByLayers: { layer: EvaluationLayer; people: Person[] }[];
   totalExcluded: number;
 }) {
-  const { orgMode, scopedEntities, adminRole } = React.useContext(OrgModeContext);
   const [query, setQuery] = useState('');
   const [activeIntent, setActiveIntent] = useState<InspectionIntent>(null);
   const [selectedPersonName, setSelectedPersonName] = useState<string | null>(null);
@@ -3523,8 +2545,8 @@ function LiveConvoPreview({ rule, layers, members, excludedByLayers, totalExclud
 
   const personExplanation = useMemo(() => {
     if (!matchedPerson) return null;
-    return explainPerson(matchedPerson, rule, layers, orgMode, scopedEntities, adminRole);
-  }, [matchedPerson, rule, layers, orgMode, scopedEntities, adminRole]);
+    return explainPerson(matchedPerson, rule, layers);
+  }, [matchedPerson, rule, layers]);
 
   const lensLabel = activeIntent?.type === 'members' ? `Members (${members.length})`
     : activeIntent?.type === 'layers' ? `System filters (${totalExcluded} excluded)`
@@ -5444,7 +4466,6 @@ function InlineGroupExperience({ data, policyContext, expanded, disclosureVarian
   const members = useMemo(() =>
     rule.children.length > 0 ? getMembersForRule(data.people, rule, layers) : [],
     [data.people, rule, layers]);
-  // InlineGroupExperience — inline context doesn't render the scoping UI; keeps the compact experience unchanged.
 
   const hasValid = rule.children.some(c => c.type === 'condition' && (c as RuleCondition).field && (c as RuleCondition).value);
 
@@ -5549,8 +4570,6 @@ function StandaloneSurface({ data, scenario }: {
   data: EntryState['data'];
   scenario: EntryState['scenario'];
 }) {
-  const { orgMode, scopedEntities, adminRole } = React.useContext(OrgModeContext);
-  const multi = isMultiEntity(orgMode);
   const [rule, setRule] = useState<RuleGroup>({ type: 'group', combinator: 'AND', children: [] });
   const [selectedGroup, setSelectedGroup] = useState<SavedGroup | null>(null);
   const [previewReady, setPreviewReady] = useState(false);
@@ -5589,15 +4608,9 @@ function StandaloneSurface({ data, scenario }: {
     excludedPeopleIds: data.people.filter(p => p.roleState !== 'active').map(p => p.id),
   }];
 
-  const [declinedEntities, setDeclinedEntities] = useState<string[]>([]);
-  const scopedPool = useMemo(
-    () => multi ? data.people.filter(p => !p.entity || scopedEntities.includes(p.entity)) : data.people,
-    [data.people, multi, scopedEntities],
-  );
   const members = useMemo(() =>
-    rule.children.length > 0 ? getMembersForRule(scopedPool, rule, layers) : [],
-    [scopedPool, rule, layers]);
-  const previousMemberIds = existingGroup?.memberIds ?? [];
+    rule.children.length > 0 ? getMembersForRule(data.people, rule, layers) : [],
+    [data.people, rule, layers]);
 
   const hasValid = rule.children.some(c => c.type === 'condition' && (c as RuleCondition).field && (c as RuleCondition).value);
 
@@ -5716,23 +4729,6 @@ function StandaloneSurface({ data, scenario }: {
         </div>
       )}
 
-      {/* Entity decision block — System Proposes, Admin Reacts.
-          Replaces GroupLevelEntityScope + DriftIndicator + PerEntityImpactPanel
-          in multi-entity mode. */}
-      {multi && rule.children.length > 0 && (
-        <div style={{ marginBottom: 12 }}>
-          <EntityDecisionBlock
-            allPeople={data.people}
-            rule={rule}
-            layers={layers}
-            isEdit={scenario.type === 'edit'}
-            previousMemberIds={previousMemberIds}
-            declined={declinedEntities}
-            setDeclined={setDeclinedEntities}
-          />
-        </div>
-      )}
-
       {/* Population preview with bidirectional refinement */}
       {(rule.children.length > 0 || isViewOnly) && (
         <div style={{
@@ -5752,8 +4748,8 @@ function StandaloneSurface({ data, scenario }: {
         </div>
       )}
 
-      {/* Downstream policies — flat list, kept for the standard / single-entity scenario */}
-      {existingGroup && existingGroup.consumers.length > 0 && !multi && (
+      {/* Downstream impact */}
+      {existingGroup && existingGroup.consumers.length > 0 && (
         <div style={{
           padding: '14px 18px', background: C.surface, border: `1px solid ${C.border}`,
           borderRadius: 12, boxShadow: S.card, marginBottom: 12,
@@ -6045,7 +5041,7 @@ function ContainerDropdown({ value, onChange }: {
   );
 }
 
-function HUD({ viewMode, setViewMode, scenarioMode, setScenarioMode, disclosureVariant, setDisclosureVariant, orgMode, setOrgMode, adminRole, setAdminRole, pendingEntities, setPendingEntities, scopedEntities, setScopedEntities }: {
+function HUD({ viewMode, setViewMode, scenarioMode, setScenarioMode, disclosureVariant, setDisclosureVariant, orgMode, setOrgMode }: {
   viewMode: ViewMode;
   setViewMode: (v: ViewMode) => void;
   scenarioMode: ScenarioMode;
@@ -6054,12 +5050,6 @@ function HUD({ viewMode, setViewMode, scenarioMode, setScenarioMode, disclosureV
   setDisclosureVariant: (v: DisclosureVariant) => void;
   orgMode: OrgMode;
   setOrgMode: (m: OrgMode) => void;
-  adminRole: AdminRole;
-  setAdminRole: (r: AdminRole) => void;
-  pendingEntities: string[];
-  setPendingEntities: (e: string[]) => void;
-  scopedEntities: string[];
-  setScopedEntities: (e: string[]) => void;
 }) {
   const hudBtnStyle = (active: boolean) => ({
     padding: '4px 10px' as const, borderRadius: 9999,
@@ -6115,105 +5105,16 @@ function HUD({ viewMode, setViewMode, scenarioMode, setScenarioMode, disclosureV
         </>
       )}
 
-      {/* Org mode — three states */}
+      {/* Org mode */}
       <div style={{ width: 1, height: 20, background: 'rgba(255,255,255,0.15)' }} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
         <span style={hudLabel}>Org</span>
-        {([
-          { key: 'standard' as OrgMode, label: 'Standard' },
-          { key: 'multi-entity' as OrgMode, label: 'Multi-entity' },
-        ]).map(m => (
-          <button key={m.key} onClick={() => setOrgMode(m.key)} style={hudBtnStyle(orgMode === m.key)}>
-            {m.label}
+        {(['standard', 'multi-entity'] as OrgMode[]).map(m => (
+          <button key={m} onClick={() => setOrgMode(m)} style={hudBtnStyle(orgMode === m)}>
+            {m === 'standard' ? 'Standard' : 'Multi-entity'}
           </button>
         ))}
       </div>
-
-      {/* Admin role — only relevant in multi-entity */}
-      {orgMode !== 'standard' && (
-        <>
-          <div style={{ width: 1, height: 20, background: 'rgba(255,255,255,0.15)' }} />
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={hudLabel}>Admin</span>
-            {(['global', 'US Corp', 'UK Ltd', 'Ireland Ltd']).map(h => {
-              const active = adminRole.homeEntity === h;
-              return (
-                <button
-                  key={h}
-                  onClick={() => {
-                    // Default reach for non-global home: 'read' into all other entities.
-                    // Lets the admin see counts but not propose. The reach pills below let them upgrade.
-                    if (h === 'global') {
-                      setAdminRole({ homeEntity: 'global', reach: {} });
-                    } else {
-                      const reach: Record<string, ReachLevel> = {};
-                      for (const e of ALL_ENTITIES) if (e !== h) reach[e] = 'read';
-                      setAdminRole({ homeEntity: h, reach });
-                    }
-                    // Reset scoped to just the new home so the row block re-asks about other entities.
-                    const newHome = h === 'global' ? 'US Corp' : h;
-                    setScopedEntities([newHome]);
-                    setPendingEntities([]);
-                  }}
-                  style={hudBtnStyle(active)}
-                >
-                  {h === 'global' ? 'Global' : h}
-                </button>
-              );
-            })}
-            {adminRole.homeEntity !== 'global' && (
-              <>
-                <span style={{ ...hudLabel, marginLeft: 8 }}>Reach</span>
-                {ALL_ENTITIES.filter(e => e !== adminRole.homeEntity).map(e => {
-                  const cur = adminRole.reach[e] ?? 'none';
-                  const order: ReachLevel[] = ['none', 'read', 'propose', 'full'];
-                  const next = () => {
-                    const idx = order.indexOf(cur);
-                    const nxt = order[(idx + 1) % order.length];
-                    setAdminRole({ ...adminRole, reach: { ...adminRole.reach, [e]: nxt } });
-                  };
-                  return (
-                    <button
-                      key={e}
-                      onClick={next}
-                      style={{
-                        ...hudBtnStyle(cur !== 'none'),
-                        fontSize: 11,
-                      }}
-                      title="Click to cycle: none → read → propose → full"
-                    >
-                      {e}: {cur}
-                    </button>
-                  );
-                })}
-              </>
-            )}
-            {pendingEntities.length > 0 && (
-              <button
-                onClick={() => {
-                  // Approve all pending: move them into scopedEntities, upgrade reach to read for the requester.
-                  const newScoped = Array.from(new Set([...scopedEntities, ...pendingEntities]))
-                    .sort((a, b) => ALL_ENTITIES.indexOf(a) - ALL_ENTITIES.indexOf(b));
-                  setScopedEntities(newScoped);
-                  const newReach = { ...adminRole.reach };
-                  for (const e of pendingEntities) {
-                    if (reachInto(adminRole, e) === 'propose') newReach[e] = 'read';
-                  }
-                  setAdminRole({ ...adminRole, reach: newReach });
-                  setPendingEntities([]);
-                }}
-                style={{
-                  ...hudBtnStyle(true),
-                  background: '#7C3AED',
-                  marginLeft: 8,
-                }}
-              >
-                Simulate approval ({pendingEntities.map(e => ENTITY_ADMINS[e]).filter(Boolean).join(', ')})
-              </button>
-            )}
-          </div>
-        </>
-      )}
     </div>
   );
 }
@@ -6231,23 +5132,7 @@ export default function ConceptF({ entryState }: { entryState: EntryState }) {
   const [viewMode, setViewModeRaw] = useState<ViewMode>(initialView);
   const [scenarioMode, setScenarioMode] = useState<ScenarioMode>(initialScenario);
   const [disclosureVariant, setDisclosureVariant] = useState<DisclosureVariant>('sheet');
-  const [orgMode, setOrgModeRaw] = useState<OrgMode>('standard');
-  const [scopedEntities, setScopedEntities] = useState<string[]>(ALL_ENTITIES);
-  const [adminRole, setAdminRole] = useState<AdminRole>(DEFAULT_ADMIN_ROLE);
-  const [pendingEntities, setPendingEntities] = useState<string[]>([]);
-
-  const setOrgMode = (m: OrgMode) => {
-    setOrgModeRaw(m);
-    // Reset to "every non-home entity is a pending decision". Home entity is
-    // auto-confirmed; others default to nothing-confirmed so the row block asks.
-    if (m === 'multi-entity') {
-      const home = adminRole.homeEntity === 'global' ? 'US Corp' : adminRole.homeEntity;
-      setScopedEntities([home]);
-    } else {
-      setScopedEntities(ALL_ENTITIES);
-    }
-    setPendingEntities([]);
-  };
+  const [orgMode, setOrgMode] = useState<OrgMode>('standard');
 
   const setViewMode = (v: ViewMode) => {
     setViewModeRaw(v);
@@ -6303,17 +5188,8 @@ export default function ConceptF({ entryState }: { entryState: EntryState }) {
   }, [viewMode, data, scenario, policyContext, disclosureVariant]);
 
   const contextValue = useMemo(
-    () => ({
-      orgMode,
-      context: viewMode === 'drawer' ? 'inline' as const : 'standalone' as const,
-      scopedEntities,
-      setScopedEntities,
-      adminRole,
-      setAdminRole,
-      pendingEntities,
-      setPendingEntities,
-    }),
-    [orgMode, viewMode, scopedEntities, adminRole, pendingEntities],
+    () => ({ orgMode, context: viewMode === 'drawer' ? 'inline' as const : 'standalone' as const }),
+    [orgMode, viewMode],
   );
 
   return (
@@ -6329,12 +5205,6 @@ export default function ConceptF({ entryState }: { entryState: EntryState }) {
           setDisclosureVariant={setDisclosureVariant}
           orgMode={orgMode}
           setOrgMode={setOrgMode}
-          adminRole={adminRole}
-          setAdminRole={setAdminRole}
-          pendingEntities={pendingEntities}
-          setPendingEntities={setPendingEntities}
-          scopedEntities={scopedEntities}
-          setScopedEntities={setScopedEntities}
         />
       </div>
     </OrgModeContext.Provider>

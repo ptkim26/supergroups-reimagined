@@ -7,7 +7,7 @@ interface Props {
 }
 
 const earlierIds: ConceptId[] = ['A', 'B', 'C', 'D'];
-const tabOrder: ConceptId[] = ['F', 'E', 'A', 'B', 'C', 'D'];
+const tabOrder: ConceptId[] = ['F', 'Fs', 'E', 'A', 'B', 'C', 'D'];
 
 export default function ConceptSwitcher({ activeConcept, onSelect }: Props) {
   if (complexity === 'complex' || activeConcept !== null) {
@@ -30,6 +30,16 @@ function SplashScreen({ onSelect }: { onSelect: (id: ConceptId) => void }) {
         </div>
         <span style={styles.heroName}>{conceptLabels.F.name}</span>
         <span style={styles.heroHypothesis}>{conceptLabels.F.hypothesis}</span>
+      </button>
+
+      {/* Stepback archive — demo alongside F */}
+      <button onClick={() => onSelect('Fs')} style={{ ...styles.heroCard, marginTop: '0.5rem', padding: '1rem 1.25rem', borderStyle: 'dashed' }}>
+        <div style={styles.heroTop}>
+          <span style={{ ...styles.heroBadge, background: '#888' }}>Fs</span>
+          <span style={{ ...styles.heroRecommended, color: '#666' }}>Archive — flat multi-entity</span>
+        </div>
+        <span style={{ ...styles.heroName, fontSize: '1rem' }}>{conceptLabels.Fs.name}</span>
+        <span style={styles.heroHypothesis}>{conceptLabels.Fs.hypothesis}</span>
       </button>
 
       {/* Hero card for Concept E */}
